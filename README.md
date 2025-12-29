@@ -10,7 +10,7 @@ A Game Boy emulator for Roblox, ported from [LuaGB](https://github.com/zeta0134/
 - Battery-backed RAM support for in-game saves
 - Leaderboard system for score-based games
 - Spectating mode to watch other players
-- Hardware-accurate audio synthesis using waveform assets
+- Audio synthesis using waveform assets
 - Per-player emulator instances
 
 ## Requirements
@@ -28,6 +28,8 @@ A Game Boy emulator for Roblox, ported from [LuaGB](https://github.com/zeta0134/
    rojo build -o Gameboy.rbxm
    ```
 4. Import the `Gameboy.rbxm` file into your Roblox place
+
+or just live sync the project and save via Roblox studio.
 
 ## Audio Assets
 
@@ -73,13 +75,14 @@ The emulator core is based on LuaGB and implements:
 - Audio Processing Unit (APU) emulation
 - DMA and interrupt handling
 
-Audio synthesis uses a wavetable approach with pre-generated assets for pulse waves, wave channel, and LFSR noise. The audio system includes hardware-accurate filtering and effects to match the original Game Boy's output characteristics.
+Audio synthesis uses a wavetable approach with pre-generated assets for pulse waves, wave channel, and LFSR noise. The audio system attempts to match the original Game Boy's output characteristics within Roblox's limitations.
 
 ## License
 
-See LICENSE.txt for details. This project is a fork of LuaGB by zeta0134.
+See LICENSE.txt for details.
 
 ## Credits
+- Based off: [Luau-GB](https://github.com/MaximumADHD/Roblox-Luau-GB) by MaximumADHD
+- Which is a fork of: [LuaGB](https://github.com/zeta0134/LuaGB) by zeta0134
 
-- Original emulator: [LuaGB](https://github.com/zeta0134/LuaGB) by zeta0134
-- Ported to Roblox with additional multiplayer features
+Special thanks to both!
