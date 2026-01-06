@@ -6,11 +6,9 @@ local function apply(opcodes, opcode_cycles, z80, memory)
     local reg = z80.registers
     local flags = reg.flags
 
+    -- Optimized: Remove nil checks - values are always valid during normal operation
     local and_a_with = function(value)
-        -- Handle nil values (can occur during save state loading)
-        local a = reg.a or 0
-        local v = value or 0
-        reg.a = bit32.band(a, v)
+        reg.a = bit32.band(reg.a, value)
         flags.z = reg.a == 0
         flags.n = false
         flags.h = true
@@ -55,10 +53,7 @@ local function apply(opcodes, opcode_cycles, z80, memory)
     end
 
     local xor_a_with = function(value)
-        -- Handle nil values (can occur during save state loading)
-        local a = reg.a or 0
-        local v = value or 0
-        reg.a = bit32.bxor(a, v)
+        reg.a = bit32.bxor(reg.a, value)
         flags.z = reg.a == 0
         flags.n = false
         flags.h = false
@@ -103,10 +98,7 @@ local function apply(opcodes, opcode_cycles, z80, memory)
     end
 
     local or_a_with = function(value)
-        -- Handle nil values (can occur during save state loading)
-        local a = reg.a or 0
-        local v = value or 0
-        reg.a = bit32.bor(a, v)
+        reg.a = bit32.bor(reg.a, value)
         flags.z = reg.a == 0
         flags.n = false
         flags.h = false
@@ -149,11 +141,9 @@ local function apply(opcodes, opcode_cycles, z80, memory)
         or_a_with(read_nn())
     end
 
-    -- cpl
+    -- cpl - complement A (flip all bits)
     opcodes[0x2F] = function()
-        -- Handle nil values (can occur during save state loading)
-        local a = reg.a or 0
-        reg.a = bit32.bxor(a, 0xFF)
+        reg.a = bit32.bxor(reg.a, 0xFF)
         flags.n = true
         flags.h = true
     end

@@ -6,6 +6,7 @@ local Mbc1 = require(root.mbc.mbc1)
 local Mbc2 = require(root.mbc.mbc2)
 local Mbc3 = require(root.mbc.mbc3)
 local Mbc5 = require(root.mbc.mbc5)
+local PocketCam = require(root.mbc.pocketcam)
 
 local Cartridge = {}
 
@@ -18,6 +19,7 @@ function Cartridge.new(modules)
     local mbc2 = Mbc2.new()
     local mbc3 = Mbc3.new()
     local mbc5 = Mbc5.new()
+    local pocketcam = PocketCam.new()
 
     cartridge.external_ram = memory.generate_block(128 * 1024)
     cartridge.external_ram.dirty = false
@@ -45,9 +47,20 @@ function Cartridge.new(modules)
     mbc_mappings[0x1D] = { mbc = mbc5, options = { rumble_pak = true } }
     mbc_mappings[0x1E] = { mbc = mbc5, options = { rumble_pak = true } }
 
+    -- Game Boy Camera (PocketCam)
+    mbc_mappings[0xFC] = { mbc = pocketcam, options = { camera = true } }
+
+    -- Reference to camera module (set during initialization)
+    cartridge.camera = nil
+
     cartridge.initialize = function(gameboy)
         cartridge.gameboy = gameboy
         cartridge.loaded = false
+        
+        -- Store reference to camera module if available
+        if gameboy.camera then
+            cartridge.camera = gameboy.camera
+        end
     end
 
     cartridge.load = function(file_data: string)
@@ -65,13 +78,23 @@ function Cartridge.new(modules)
 
         if mbc_mappings[cartridge.header.mbc_type] then
             local MBC = mbc_mappings[cartridge.header.mbc_type].mbc
-            for k, v in pairs(mbc_mappings[cartridge.header.mbc_type].options) do
+            local options = mbc_mappings[cartridge.header.mbc_type].options
+            for k, v in pairs(options) do
                 MBC[k] = v
             end
             print("Using mapper: ", cartridge.header.mbc_name)
             MBC.raw_data = cartridge.raw_data
             MBC.external_ram = cartridge.external_ram
             MBC.header = cartridge.header
+            
+            -- Set up camera callback for PocketCam MBC
+            if options.camera and MBC.setCaptureCallback and cartridge.camera then
+                MBC:setCaptureCallback(function()
+                    return cartridge.camera.captureImage()
+                end)
+                print("[GB Camera] Camera capture callback connected")
+            end
+            
             -- Cart ROM
             memory.map_block(0x00, 0x7F, MBC)
             -- External RAM

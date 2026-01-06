@@ -140,23 +140,89 @@ function Graphics.new(modules)
         graphics.reset()
     end
 
+    -- Base64 encoding table
+    local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    
+    -- Helper to encode byte array as base64 string (JSON-safe for DataStore)
+    local function encodeBytes(data, startAddr, endAddr)
+        local bytes = {}
+        for i = startAddr, endAddr do
+            bytes[#bytes + 1] = data[i] or 0
+        end
+        
+        -- Base64 encode
+        local result = {}
+        local n = #bytes
+        for i = 1, n, 3 do
+            local b1 = bytes[i] or 0
+            local b2 = bytes[i + 1] or 0
+            local b3 = bytes[i + 2] or 0
+            
+            local c1 = bit32.rshift(b1, 2)
+            local c2 = bit32.bor(bit32.lshift(bit32.band(b1, 3), 4), bit32.rshift(b2, 4))
+            local c3 = bit32.bor(bit32.lshift(bit32.band(b2, 15), 2), bit32.rshift(b3, 6))
+            local c4 = bit32.band(b3, 63)
+            
+            result[#result + 1] = string.sub(b64chars, c1 + 1, c1 + 1)
+            result[#result + 1] = string.sub(b64chars, c2 + 1, c2 + 1)
+            if i + 1 <= n then
+                result[#result + 1] = string.sub(b64chars, c3 + 1, c3 + 1)
+            else
+                result[#result + 1] = "="
+            end
+            if i + 2 <= n then
+                result[#result + 1] = string.sub(b64chars, c4 + 1, c4 + 1)
+            else
+                result[#result + 1] = "="
+            end
+        end
+        return table.concat(result)
+    end
+    
+    -- Helper to decode base64 string back to byte array
+    local function decodeBytes(str, startAddr)
+        local data = {}
+        local b64lookup = {}
+        for i = 1, 64 do
+            b64lookup[string.sub(b64chars, i, i)] = i - 1
+        end
+        b64lookup["="] = 0
+        
+        local bytes = {}
+        for i = 1, #str, 4 do
+            local c1 = b64lookup[string.sub(str, i, i)] or 0
+            local c2 = b64lookup[string.sub(str, i + 1, i + 1)] or 0
+            local c3 = b64lookup[string.sub(str, i + 2, i + 2)] or 0
+            local c4 = b64lookup[string.sub(str, i + 3, i + 3)] or 0
+            
+            bytes[#bytes + 1] = bit32.bor(bit32.lshift(c1, 2), bit32.rshift(c2, 4))
+            if string.sub(str, i + 2, i + 2) ~= "=" then
+                bytes[#bytes + 1] = bit32.band(bit32.bor(bit32.lshift(c2, 4), bit32.rshift(c3, 2)), 255)
+            end
+            if string.sub(str, i + 3, i + 3) ~= "=" then
+                bytes[#bytes + 1] = bit32.band(bit32.bor(bit32.lshift(c3, 6), c4), 255)
+            end
+        end
+        
+        for i, v in ipairs(bytes) do
+            data[startAddr + i - 1] = v
+        end
+        return data
+    end
+
     graphics.save_state = function()
         local state = {}
 
-        state.vram = {}
-        for i = 0x8000, (0x8000 + (16 * 2 * 1024) - 1) do
-            state.vram[i] = graphics.vram[i]
-        end
-
+        -- Store VRAM as compact string (0-based for efficient storage)
+        state.vram_data = encodeBytes(graphics.vram, 0x8000, 0x8000 + (16 * 2 * 1024) - 1)
         state.vram_bank = graphics.vram.bank
 
-        state.oam = {}
-        for i = 0xFE00, 0xFE9F do
-            state.oam[i] = graphics.oam[i]
-        end
+        -- Store OAM as compact string
+        state.oam_data = encodeBytes(graphics.oam, 0xFE00, 0xFE9F)
 
         state.vblank_count = graphics.vblank_count
         state.last_edge = graphics.last_edge
+        state.next_edge = graphics.next_edge  -- Critical timing field
         state.lcdstat = graphics.lcdstat
         state.mode = graphics.registers.status.mode
 
@@ -197,50 +263,147 @@ function Graphics.new(modules)
                 hblank_interrupt_enabled = graphics.registers.status.hblank_interrupt_enabled,
             }
         }
+        
+        -- Save frame data (critical for window internal line counter)
+        state.frame_data = {
+            window_pos_y = graphics.frame_data and graphics.frame_data.window_pos_y or 0,
+            window_draw_y = graphics.frame_data and graphics.frame_data.window_draw_y or 0,
+        }
 
         return state
     end
 
     graphics.load_state = function(state)
-        -- Load VRAM first (write directly to avoid triggering cache updates during load)
-        for i = 0x8000, (0x8000 + (16 * 2 * 1024) - 1) do
-            -- Handle nil values (can occur during save state loading)
-            graphics.vram[i] = state.vram[i] or 0
+        if not state then
+            warn("[Graphics] Invalid state in load_state")
+            return
+        end
+        
+        -- Load VRAM from compact string format (new) or legacy format
+        if state.vram_data then
+            -- New compact format
+            local decoded = decodeBytes(state.vram_data, 0x8000)
+            for addr, value in pairs(decoded) do
+                graphics.vram[addr] = value
+            end
+        elseif state.vram then
+            -- Legacy format (sparse array)
+            for i = 0x8000, (0x8000 + (16 * 2 * 1024) - 1) do
+                graphics.vram[i] = state.vram[i] or 0
+            end
         end
 
         graphics.vram.bank = state.vram_bank or 0
 
-        -- Load OAM directly to raw array to avoid triggering refresh during load
-        for i = 0xFE00, 0xFE9F do
-            -- Ensure we don't write nil values (use 0x00 as default)
-            graphics.oam_raw[i] = state.oam[i] or 0x00
+        -- Load OAM from compact string format (new) or legacy format
+        if state.oam_data then
+            -- New compact format
+            local decoded = decodeBytes(state.oam_data, 0xFE00)
+            for addr, value in pairs(decoded) do
+                graphics.oam_raw[addr] = value
+            end
+        elseif state.oam then
+            -- Legacy format
+            for i = 0xFE00, 0xFE9F do
+                graphics.oam_raw[i] = state.oam[i] or 0x00
+            end
         end
         
         graphics.vblank_count = state.vblank_count or 0
         graphics.last_edge = state.last_edge or 0
+        graphics.next_edge = state.next_edge or 0  -- Critical timing field
         graphics.lcdstat = state.lcdstat or false
         graphics.registers.status.mode = state.mode or 2
 
-        graphics.palette.bg = state.palette.bg or graphics.palette.bg
-        graphics.palette.obj0 = state.palette.obj0 or graphics.palette.obj0
-        graphics.palette.obj1 = state.palette.obj1 or graphics.palette.obj1
-
-        for p = 0, 7 do
-            if state.color_bg and state.color_bg[p] then
-                graphics.palette.color_bg[p] = state.color_bg[p]
+        -- Restore DMG palettes (fix JSON numeric key to string key conversion)
+        -- JSON converts numeric keys to strings, so we try both
+        local function restorePaletteEntry(savedPalette)
+            local result = {}
+            for i = 0, 3 do
+                local entry = savedPalette[i] or savedPalette[tostring(i)]
+                if entry then
+                    -- Entry is {r, g, b} but might have string keys
+                    result[i] = {
+                        entry[1] or entry["1"] or 255,
+                        entry[2] or entry["2"] or 255,
+                        entry[3] or entry["3"] or 255
+                    }
+                else
+                    result[i] = {255, 255, 255}  -- Default white
+                end
             end
-            if state.color_obj and state.color_obj[p] then
-                graphics.palette.color_obj[p] = state.color_obj[p]
+            return result
+        end
+        
+        if state.palette and state.palette.bg then
+            local restored = restorePaletteEntry(state.palette.bg)
+            for i = 0, 3 do
+                graphics.palette.bg[i] = restored[i]
+            end
+        end
+        if state.palette and state.palette.obj0 then
+            local restored = restorePaletteEntry(state.palette.obj0)
+            for i = 0, 3 do
+                graphics.palette.obj0[i] = restored[i]
+            end
+        end
+        if state.palette and state.palette.obj1 then
+            local restored = restorePaletteEntry(state.palette.obj1)
+            for i = 0, 3 do
+                graphics.palette.obj1[i] = restored[i]
             end
         end
 
+        -- Note: GBC color palettes are rebuilt from raw values below, 
+        -- so we skip the potentially corrupted state.color_bg/color_obj tables
+
         for i = 0, 63 do
-            if state.color_bg_raw and state.color_bg_raw[i] then
-                graphics.palette.color_bg_raw[i] = state.color_bg_raw[i]
+            -- Handle JSON string key conversion
+            local bg_val = state.color_bg_raw and (state.color_bg_raw[i] or state.color_bg_raw[tostring(i)])
+            if bg_val then
+                graphics.palette.color_bg_raw[i] = bg_val
             end
-            if state.color_obj_raw and state.color_obj_raw[i] then
-                graphics.palette.color_obj_raw[i] = state.color_obj_raw[i]
+            local obj_val = state.color_obj_raw and (state.color_obj_raw[i] or state.color_obj_raw[tostring(i)])
+            if obj_val then
+                graphics.palette.color_obj_raw[i] = obj_val
             end
+        end
+        
+        -- Rebuild color palettes from raw values (JSON may corrupt nested tables)
+        for p = 0, 7 do
+            if not graphics.palette.color_bg[p] then
+                graphics.palette.color_bg[p] = {}
+            end
+            if not graphics.palette.color_obj[p] then
+                graphics.palette.color_obj[p] = {}
+            end
+            for c = 0, 3 do
+                -- Rebuild BG palette from raw bytes
+                local bg_raw_idx = p * 8 + c * 2
+                local bg_low = graphics.palette.color_bg_raw[bg_raw_idx] or 0
+                local bg_high = graphics.palette.color_bg_raw[bg_raw_idx + 1] or 0
+                local bg_rgb5 = bit32.lshift(bg_high, 8) + bg_low
+                local bg_r = bit32.band(bg_rgb5, 0x001F) * 8
+                local bg_g = bit32.rshift(bit32.band(bg_rgb5, 0x03E0), 5) * 8
+                local bg_b = bit32.rshift(bit32.band(bg_rgb5, 0x7C00), 10) * 8
+                graphics.palette.color_bg[p][c] = { bg_r, bg_g, bg_b }
+                
+                -- Rebuild OBJ palette from raw bytes
+                local obj_raw_idx = p * 8 + c * 2
+                local obj_low = graphics.palette.color_obj_raw[obj_raw_idx] or 0
+                local obj_high = graphics.palette.color_obj_raw[obj_raw_idx + 1] or 0
+                local obj_rgb5 = bit32.lshift(obj_high, 8) + obj_low
+                local obj_r = bit32.band(obj_rgb5, 0x001F) * 8
+                local obj_g = bit32.rshift(bit32.band(obj_rgb5, 0x03E0), 5) * 8
+                local obj_b = bit32.rshift(bit32.band(obj_rgb5, 0x7C00), 10) * 8
+                graphics.palette.color_obj[p][c] = { obj_r, obj_g, obj_b }
+            end
+        end
+        
+        -- Restore frame data (critical for window internal line counter)
+        if state.frame_data and graphics.frame_data then
+            graphics.frame_data.window_pos_y = state.frame_data.window_pos_y or 0
+            graphics.frame_data.window_draw_y = state.frame_data.window_draw_y or 0
         end
 
         -- Refresh all graphics cache after loading (tiles, maps, OAM)
@@ -315,6 +478,7 @@ function Graphics.new(modules)
     local frame_data = {}
     frame_data.window_pos_y = 0
     frame_data.window_draw_y = 0
+    graphics.frame_data = frame_data  -- Expose for save_state access
 
     graphics.initialize_frame = function()
         -- latch WY at the beginning of the *frame*
@@ -342,6 +506,10 @@ function Graphics.new(modules)
         scanline_data.current_map_attr = graphics.registers.background_attr
 
         scanline_data.active_attr = scanline_data.current_map_attr[scanline_data.bg_tile_x][scanline_data.bg_tile_y]
+        -- Apply vertical flip for the FIRST background tile (tile fetch code only runs after first 8 pixels)
+        if scanline_data.active_attr.vertical_flip then
+            scanline_data.sub_y = 7 - scanline_data.sub_y
+        end
         scanline_data.active_tile = scanline_data.current_map[scanline_data.bg_tile_x][scanline_data.bg_tile_y]
         scanline_data.window_active = false
     end
@@ -363,66 +531,108 @@ function Graphics.new(modules)
             end
 
             scanline_data.active_attr = scanline_data.current_map_attr[scanline_data.bg_tile_x][scanline_data.bg_tile_y]
+            -- Apply vertical flip for the FIRST window tile (tile fetch code only runs after first 8 pixels)
+            if scanline_data.active_attr.vertical_flip then
+                scanline_data.sub_y = 7 - scanline_data.sub_y
+            end
             scanline_data.active_tile = scanline_data.current_map[scanline_data.bg_tile_x][scanline_data.bg_tile_y]
             scanline_data.window_active = true
         end
     end
 
+    -- Optimized: Cache locals, reduce table lookups, remove nil checks from hot path
+    -- IMPORTANT: scanline_data.x must be kept in sync for switch_to_window() checks
     graphics.draw_next_pixels = function(duration)
         local ly = io.ram[ports.LY]
-        local game_screen = graphics.game_screen
+        local scanline_row = graphics.game_screen[ly]
+        local bg_enabled = graphics.registers.background_enabled
+        local sd = scanline_data
+        local sd_x = sd.x
+        local sd_sub_x = sd.sub_x
+        local sd_sub_y = sd.sub_y
+        local sd_bg_tile_x = sd.bg_tile_x
+        local sd_bg_tile_y = sd.bg_tile_y
+        local active_tile = sd.active_tile
+        local active_attr = sd.active_attr
+        local current_map = sd.current_map
+        local current_map_attr = sd.current_map_attr
+        local bg_index_arr = sd.bg_index
+        local bg_priority_arr = sd.bg_priority
+        local window_active = sd.window_active
+        local scy = io.ram[ports.SCY]
 
-        while scanline_data.x < duration and scanline_data.x < 160 do
-            local dx = scanline_data.x
-            if not scanline_data.window_active then
+        while sd_x < duration and sd_x < 160 do
+            if not window_active then
+                -- CRITICAL: Update scanline_data.x BEFORE switch_to_window() check
+                -- switch_to_window() reads scanline_data.x to determine window activation
+                sd.x = sd_x
                 graphics.switch_to_window()
-            end
-
-            local bg_index = 0 --default, in case no background is enabled
-            if graphics.registers.background_enabled then
-                -- DRAW BG PIXEL HERE
-                local sub_x = scanline_data.sub_x
-                local sub_y = scanline_data.sub_y
-                bg_index = scanline_data.active_tile[sub_x][sub_y] or 0
-                local active_palette = scanline_data.active_attr.palette[bg_index]
-
-                -- Handle nil values (can occur during save state loading)
-                if active_palette and game_screen[ly] and game_screen[ly][dx] then
-                    game_screen[ly][dx][1] = active_palette[1] or 255
-                    game_screen[ly][dx][2] = active_palette[2] or 255
-                    game_screen[ly][dx][3] = active_palette[3] or 255
+                window_active = sd.window_active
+                if window_active then
+                    -- Reload cached values after window switch
+                    sd_sub_x = sd.sub_x
+                    sd_sub_y = sd.sub_y
+                    sd_bg_tile_x = sd.bg_tile_x
+                    sd_bg_tile_y = sd.bg_tile_y
+                    active_tile = sd.active_tile
+                    active_attr = sd.active_attr
+                    current_map = sd.current_map
+                    current_map_attr = sd.current_map_attr
                 end
             end
 
-            scanline_data.bg_index[scanline_data.x] = bg_index
-            scanline_data.bg_priority[scanline_data.x] = scanline_data.active_attr.priority
+            local bg_index = 0
+            if bg_enabled then
+                bg_index = active_tile[sd_sub_x][sd_sub_y] or 0
+                local pixel = scanline_row[sd_x]
+                local color = active_attr.palette[bg_index]
+                pixel[1] = color[1]
+                pixel[2] = color[2]
+                pixel[3] = color[3]
+            end
 
-            scanline_data.x = scanline_data.x + 1
-            scanline_data.sub_x = scanline_data.sub_x + 1
-            if scanline_data.sub_x > 7 then
-                -- fetch next tile
-                scanline_data.sub_x = 0
-                scanline_data.bg_tile_x = scanline_data.bg_tile_x + 1
-                if scanline_data.bg_tile_x >= 32 then
-                    scanline_data.bg_tile_x = scanline_data.bg_tile_x - 32
+            bg_index_arr[sd_x] = bg_index
+            bg_priority_arr[sd_x] = active_attr.priority
+
+            sd_x = sd_x + 1
+            sd_sub_x = sd_sub_x + 1
+            if sd_sub_x > 7 then
+                sd_sub_x = 0
+                sd_bg_tile_x = sd_bg_tile_x + 1
+                if sd_bg_tile_x >= 32 then
+                    sd_bg_tile_x = sd_bg_tile_x - 32
                 end
-                if not scanline_data.window_active then
-                    scanline_data.sub_y = (ly + io.ram[ports.SCY]) % 8
-                    scanline_data.bg_tile_y = math.floor((ly + io.ram[ports.SCY]) / 8)
-                    if scanline_data.bg_tile_y >= 32 then
-                        scanline_data.bg_tile_y = scanline_data.bg_tile_y - 32
+                if not window_active then
+                    sd_sub_y = (ly + scy) % 8
+                    sd_bg_tile_y = math.floor((ly + scy) / 8)
+                    if sd_bg_tile_y >= 32 then
+                        sd_bg_tile_y = sd_bg_tile_y - 32
                     end
+                else
+                    -- For window, recalculate sub_y from base value before applying flip
+                    -- (window_draw_y was incremented after setting sub_y, so subtract 1)
+                    sd_sub_y = (frame_data.window_draw_y - 1) % 8
                 end
 
-                local tile_attr = scanline_data.current_map_attr[scanline_data.bg_tile_x][scanline_data.bg_tile_y]
+                local tile_attr = current_map_attr[sd_bg_tile_x][sd_bg_tile_y]
                 if tile_attr.vertical_flip then
-                    scanline_data.sub_y = 7 - scanline_data.sub_y
+                    sd_sub_y = 7 - sd_sub_y
                 end
 
-                scanline_data.active_attr = scanline_data.current_map_attr[scanline_data.bg_tile_x][scanline_data.bg_tile_y]
-                scanline_data.active_tile = scanline_data.current_map[scanline_data.bg_tile_x][scanline_data.bg_tile_y]
+                active_attr = tile_attr
+                active_tile = current_map[sd_bg_tile_x][sd_bg_tile_y]
             end
         end
+
+        -- Write back to scanline_data
+        sd.x = sd_x
+        sd.sub_x = sd_sub_x
+        sd.sub_y = sd_sub_y
+        sd.bg_tile_x = sd_bg_tile_x
+        sd.bg_tile_y = sd_bg_tile_y
+        sd.active_tile = active_tile
+        sd.active_attr = active_attr
+        sd.window_active = window_active
     end
 
     graphics.getIndexFromTilemap = function(map, tile_data, x, y)
@@ -461,37 +671,35 @@ function Graphics.new(modules)
         return graphics.cache.tiles[tile_index][subpixel_x][subpixel_y]
     end
 
+    -- Optimized: Cache locals, reduce table lookups in inner loops
     graphics.draw_sprites_into_scanline = function(scanline, bg_index, bg_priority)
-        if not graphics.registers.sprites_enabled then
+        local regs = graphics.registers
+        if not regs.sprites_enabled then
             return
         end
+        
+        local oam_cache = graphics.cache.oam
+        local sprite_size = regs.large_sprites and 16 or 8
         local active_sprites = {}
-        local sprite_size = 8
-        if graphics.registers.large_sprites then
-            sprite_size = 16
-        end
+        local active_count = 0
 
-        -- Collect up to the 10 highest priority sprites in a list.
-        -- Sprites have priority first by their X coordinate, then by their index
-        -- in the list.
-        local i = 0
-        while i < 40 do
-            -- is this sprite being displayed on this scanline? (respect to Y coordinate)
-            local sprite_y = graphics.cache.oam[i].y
-            local sprite_lower = sprite_y
-            local sprite_upper = sprite_y + sprite_size
-            if scanline >= sprite_lower and scanline < sprite_upper then
-                if #active_sprites < 10 then
-                    table.insert(active_sprites, i)
+        -- Collect up to 10 sprites on this scanline
+        for i = 0, 39 do
+            local sprite = oam_cache[i]
+            local sprite_y = sprite.y
+            if scanline >= sprite_y and scanline < sprite_y + sprite_size then
+                if active_count < 10 then
+                    active_count = active_count + 1
+                    active_sprites[active_count] = i
                 else
-                    -- There are more than 10 sprites in the table, so we need to pick
-                    -- a candidate to vote off the island (possibly this one)
+                    -- Find lowest priority sprite to potentially replace
                     local lowest_priority = i
                     local lowest_priority_index = nil
-                    for j = 1, #active_sprites do
-                        local lowest_x = graphics.cache.oam[lowest_priority].x
-                        local candidate_x = graphics.cache.oam[active_sprites[j]].x
+                    local lowest_x = sprite.x
+                    for j = 1, 10 do
+                        local candidate_x = oam_cache[active_sprites[j]].x
                         if candidate_x > lowest_x then
+                            lowest_x = candidate_x
                             lowest_priority = active_sprites[j]
                             lowest_priority_index = j
                         end
@@ -501,45 +709,80 @@ function Graphics.new(modules)
                     end
                 end
             end
-            i = i + 1
         end
 
-        -- now, for every sprite in the list, display it on the current scanline
-        for j = #active_sprites, 1, -1 do
-            local sprite = graphics.cache.oam[active_sprites[j]]
-
-            local sub_y = 16 - ((sprite.y + 16) - scanline)
-            if sprite.vertical_flip then
-                sub_y = sprite_size - 1 - sub_y
-            end
-
-            local tile = sprite.tile
-            if sprite_size == 16 then
-                tile = sprite.upper_tile
-                if sub_y >= 8 then
-                    tile = sprite.lower_tile
-                    sub_y = sub_y - 8
-                end
-            end
-
-            local game_screen = graphics.game_screen
-
-            for x = 0, 7 do
-                local display_x = sprite.x + x
-                if display_x >= 0 and display_x < 160 then
-                    local subpixel_index = tile[x][sub_y]
-                    if subpixel_index > 0 then
-                        if (bg_priority[display_x] == false and not sprite.bg_priority) or bg_index[display_x] == 0 or graphics.registers.oam_priority then
-                            local subpixel_color = sprite.palette[subpixel_index]
-                            game_screen[scanline][display_x][1] = subpixel_color[1]
-                            game_screen[scanline][display_x][2] = subpixel_color[2]
-                            game_screen[scanline][display_x][3] = subpixel_color[3]
-                        end
+        -- DMG sprite priority: Sort by X-coordinate (lower X = higher priority = drawn last)
+        -- For CGB, OAM order is used (no sort needed since we collect in OAM order)
+        -- Secondary sort by OAM index for sprites with same X
+        if graphics.gameboy.type ~= graphics.gameboy.types.color then
+            -- Sort active_sprites by X ASCENDING (lower X at front = index 1)
+            -- Drawing loop is j = active_count → 1, so index 1 is drawn LAST (on top)
+            -- This means lower X = drawn last = higher priority (correct DMG behavior)
+            -- Use insertion sort for small arrays (max 10 elements)
+            for i = 2, active_count do
+                local j = i
+                while j > 1 do
+                    local curr_oam = active_sprites[j]
+                    local prev_oam = active_sprites[j - 1]
+                    local curr_x = oam_cache[curr_oam].x
+                    local prev_x = oam_cache[prev_oam].x
+                    -- Sort by X ascending, then by OAM index ascending (lower values first)
+                    -- Lower X at front (index 1) → drawn last → appears on top
+                    if curr_x < prev_x or (curr_x == prev_x and curr_oam < prev_oam) then
+                        active_sprites[j] = prev_oam
+                        active_sprites[j - 1] = curr_oam
+                        j = j - 1
+                    else
+                        break
                     end
                 end
             end
         end
-        if #active_sprites > 0 then
+
+        -- Draw sprites (back to front for proper priority)
+        local game_screen = graphics.game_screen
+        local scanline_row = game_screen[scanline]
+        local oam_priority = regs.oam_priority
+        
+        for j = active_count, 1, -1 do
+            local sprite = oam_cache[active_sprites[j]]
+            local sprite_x = sprite.x
+            local sub_y = scanline - sprite.y
+            
+            if sprite.vertical_flip then
+                sub_y = sprite_size - 1 - sub_y
+            end
+
+            local tile
+            if sprite_size == 16 then
+                if sub_y >= 8 then
+                    tile = sprite.lower_tile
+                    sub_y = sub_y - 8
+                else
+                    tile = sprite.upper_tile
+                end
+            else
+                tile = sprite.tile
+            end
+
+            local sprite_palette = sprite.palette
+            local sprite_bg_priority = sprite.bg_priority
+            
+            for x = 0, 7 do
+                local display_x = sprite_x + x
+                if display_x >= 0 and display_x < 160 then
+                    local idx = tile[x][sub_y]
+                    if idx > 0 then
+                        if oam_priority or bg_index[display_x] == 0 or (not bg_priority[display_x] and not sprite_bg_priority) then
+                            local color = sprite_palette[idx]
+                            local pixel = scanline_row[display_x]
+                            pixel[1] = color[1]
+                            pixel[2] = color[2]
+                            pixel[3] = color[3]
+                        end
+                    end
+                end
+            end
         end
     end
 

@@ -1,6 +1,22 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+
+-- Get player controls module for movement lock
+local playerControlsModule = require(Players.LocalPlayer.PlayerScripts:WaitForChild("PlayerModule"))
+local playerControls = playerControlsModule:GetControls()
+
+-- Movement lock state (default: locked)
+local movementLocked = true
+
+-- Lock movement by default on startup
+task.spawn(function()
+	task.wait(0.5) -- Wait for character to load
+	if movementLocked then
+		playerControls:Disable()
+	end
+end)
 
 -- Wait for RemoteEvents to be available
 local RemoteEvents
@@ -19,6 +35,8 @@ print("  - LoadROM:", RemoteEvents.LoadROM and "OK" or "MISSING")
 print("  - PlayerInput:", RemoteEvents.PlayerInput and "OK" or "MISSING")
 print("  - GetEditableImage:", RemoteEvents.GetEditableImage and "OK" or "MISSING")
 print("  - StatusMessage:", RemoteEvents.StatusMessage and "OK" or "MISSING")
+print("  - CameraCaptureRequest:", RemoteEvents.CameraCaptureRequest and "OK" or "MISSING")
+print("  - CameraCaptureResponse:", RemoteEvents.CameraCaptureResponse and "OK" or "MISSING")
 
 -- Double-check by getting from ReplicatedStorage directly
 local loadROMCheck = ReplicatedStorage:FindFirstChild("LoadROM")
@@ -35,7 +53,7 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GameboyEmulator"
 screenGui.ResetOnSpawn = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+screenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 -- Main container frame (full screen with padding)
 local mainFrame = Instance.new("Frame")
@@ -91,11 +109,11 @@ titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = displayTitle
 
--- Minimize button
+-- Minimize button for emulator
 local minimizeButton = Instance.new("TextButton")
 minimizeButton.Name = "MinimizeButton"
-minimizeButton.Size = UDim2.new(0, 50, 0, 40)
-minimizeButton.Position = UDim2.new(1, -60, 0, 5)
+minimizeButton.Size = UDim2.new(0, 40, 0, 32)
+minimizeButton.Position = UDim2.new(1, -50, 0, 9)
 minimizeButton.BackgroundColor3 = Color3.fromRGB(60, 60, 65)
 minimizeButton.BorderSizePixel = 0
 minimizeButton.Text = "−"
@@ -230,171 +248,227 @@ controlPanel.Position = UDim2.new(0, 540, 0, 0)
 controlPanel.BackgroundTransparency = 1
 controlPanel.Parent = mainFrame
 
--- ROM Loading section
-local romSection = Instance.new("Frame")
-romSection.Name = "ROMSection"
-romSection.Size = UDim2.new(1, 0, 0, 140)
-romSection.Position = UDim2.new(0, 0, 0, 0)
-romSection.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-romSection.BorderSizePixel = 0
-romSection.Parent = controlPanel
+-- ============================================
+-- COMBINED ROM & Actions Container
+-- ============================================
+local combinedSection = Instance.new("Frame")
+combinedSection.Name = "CombinedSection"
+combinedSection.Size = UDim2.new(1, 0, 0, 300)
+combinedSection.Position = UDim2.new(0, 0, 0, 0)
+combinedSection.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+combinedSection.BorderSizePixel = 0
+combinedSection.ClipsDescendants = true
+combinedSection.Parent = controlPanel
 
-local romCorner = Instance.new("UICorner")
-romCorner.CornerRadius = UDim.new(0, 12)
-romCorner.Parent = romSection
+local combinedCorner = Instance.new("UICorner")
+combinedCorner.CornerRadius = UDim.new(0, 12)
+combinedCorner.Parent = combinedSection
 
-local romPadding = Instance.new("UIPadding")
-romPadding.PaddingTop = UDim.new(0, 20)
-romPadding.PaddingBottom = UDim.new(0, 20)
-romPadding.PaddingLeft = UDim.new(0, 20)
-romPadding.PaddingRight = UDim.new(0, 20)
-romPadding.Parent = romSection
+-- Title bar for combined section
+local combinedTitleBar = Instance.new("Frame")
+combinedTitleBar.Name = "TitleBar"
+combinedTitleBar.Size = UDim2.new(1, 0, 0, 40)
+combinedTitleBar.Position = UDim2.new(0, 0, 0, 0)
+combinedTitleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+combinedTitleBar.BorderSizePixel = 0
+combinedTitleBar.Parent = combinedSection
 
-local romTitle = Instance.new("TextLabel")
-romTitle.Name = "Title"
-romTitle.Size = UDim2.new(1, 0, 0, 20)
-romTitle.Position = UDim2.new(0, 0, 0, 0)
-romTitle.BackgroundTransparency = 1
-romTitle.Text = "Load ROM"
-romTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
-romTitle.TextSize = 14
-romTitle.Font = Enum.Font.GothamBold
-romTitle.TextXAlignment = Enum.TextXAlignment.Left
-romTitle.Parent = romSection
+local combinedTitleCorner = Instance.new("UICorner")
+combinedTitleCorner.CornerRadius = UDim.new(0, 12)
+combinedTitleCorner.Parent = combinedTitleBar
 
+-- Fix bottom corners
+local combinedTitleBottom = Instance.new("Frame")
+combinedTitleBottom.Size = UDim2.new(1, 0, 0, 12)
+combinedTitleBottom.Position = UDim2.new(0, 0, 1, -12)
+combinedTitleBottom.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+combinedTitleBottom.BorderSizePixel = 0
+combinedTitleBottom.Parent = combinedTitleBar
+
+local combinedTitleLabel = Instance.new("TextLabel")
+combinedTitleLabel.Name = "Title"
+combinedTitleLabel.Size = UDim2.new(1, -60, 1, 0)
+combinedTitleLabel.Position = UDim2.new(0, 15, 0, 0)
+combinedTitleLabel.BackgroundTransparency = 1
+combinedTitleLabel.Text = "ROM & Actions"
+combinedTitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+combinedTitleLabel.TextSize = 14
+combinedTitleLabel.Font = Enum.Font.GothamBold
+combinedTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+combinedTitleLabel.Parent = combinedTitleBar
+
+-- Minimize button for combined section
+local combinedMinimizeBtn = Instance.new("TextButton")
+combinedMinimizeBtn.Name = "MinimizeButton"
+combinedMinimizeBtn.Size = UDim2.new(0, 32, 0, 26)
+combinedMinimizeBtn.Position = UDim2.new(1, -42, 0, 7)
+combinedMinimizeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 65)
+combinedMinimizeBtn.BorderSizePixel = 0
+combinedMinimizeBtn.Text = "−"
+combinedMinimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+combinedMinimizeBtn.TextSize = 20
+combinedMinimizeBtn.Font = Enum.Font.GothamBold
+combinedMinimizeBtn.AutoButtonColor = false
+combinedMinimizeBtn.Parent = combinedTitleBar
+
+local combinedMinimizeCorner = Instance.new("UICorner")
+combinedMinimizeCorner.CornerRadius = UDim.new(0, 4)
+combinedMinimizeCorner.Parent = combinedMinimizeBtn
+
+-- Content container (inside combined section)
+local combinedContent = Instance.new("Frame")
+combinedContent.Name = "Content"
+combinedContent.Size = UDim2.new(1, -30, 1, -55)
+combinedContent.Position = UDim2.new(0, 15, 0, 48)
+combinedContent.BackgroundTransparency = 1
+combinedContent.Parent = combinedSection
+
+-- URL input
 local urlTextBox = Instance.new("TextBox")
 urlTextBox.Name = "URLTextBox"
-urlTextBox.Size = UDim2.new(1, 0, 0, 40)
-urlTextBox.Position = UDim2.new(0, 0, 0, 30)
+urlTextBox.Size = UDim2.new(1, 0, 0, 36)
+urlTextBox.Position = UDim2.new(0, 0, 0, 0)
 urlTextBox.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
 urlTextBox.BorderSizePixel = 0
 urlTextBox.Text = ""
 urlTextBox.PlaceholderText = "Enter ROM URL..."
 urlTextBox.TextColor3 = Color3.new(1, 1, 1)
-urlTextBox.TextSize = 13
+urlTextBox.TextSize = 12
 urlTextBox.Font = Enum.Font.Gotham
 urlTextBox.TextXAlignment = Enum.TextXAlignment.Left
 urlTextBox.ClearTextOnFocus = false
-urlTextBox.Parent = romSection
+urlTextBox.Parent = combinedContent
 
 local urlCorner = Instance.new("UICorner")
 urlCorner.CornerRadius = UDim.new(0, 6)
 urlCorner.Parent = urlTextBox
 
 local urlPadding = Instance.new("UIPadding")
-urlPadding.PaddingLeft = UDim.new(0, 12)
-urlPadding.PaddingRight = UDim.new(0, 12)
+urlPadding.PaddingLeft = UDim.new(0, 10)
+urlPadding.PaddingRight = UDim.new(0, 10)
 urlPadding.Parent = urlTextBox
 
+-- Load ROM button
 local loadButton = Instance.new("TextButton")
 loadButton.Name = "LoadButton"
-loadButton.Size = UDim2.new(1, 0, 0, 40)
-loadButton.Position = UDim2.new(0, 0, 0, 80)
+loadButton.Size = UDim2.new(1, 0, 0, 36)
+loadButton.Position = UDim2.new(0, 0, 0, 42)
 loadButton.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
 loadButton.BorderSizePixel = 0
 loadButton.Text = "Load ROM"
 loadButton.TextColor3 = Color3.new(1, 1, 1)
-loadButton.TextSize = 14
+loadButton.TextSize = 13
 loadButton.Font = Enum.Font.GothamBold
 loadButton.AutoButtonColor = false
-loadButton.Parent = romSection
+loadButton.Parent = combinedContent
 
 local loadCorner = Instance.new("UICorner")
 loadCorner.CornerRadius = UDim.new(0, 6)
 loadCorner.Parent = loadButton
 
--- Actions section
-local actionsSection = Instance.new("Frame")
-actionsSection.Name = "ActionsSection"
-actionsSection.Size = UDim2.new(1, 0, 0, 190)
-actionsSection.Position = UDim2.new(0, 0, 0, 160)
-actionsSection.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-actionsSection.BorderSizePixel = 0
-actionsSection.Parent = controlPanel
+-- Separator line
+local separator = Instance.new("Frame")
+separator.Name = "Separator"
+separator.Size = UDim2.new(1, 0, 0, 1)
+separator.Position = UDim2.new(0, 0, 0, 90)
+separator.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+separator.BorderSizePixel = 0
+separator.Parent = combinedContent
 
-local actionsCorner = Instance.new("UICorner")
-actionsCorner.CornerRadius = UDim.new(0, 12)
-actionsCorner.Parent = actionsSection
-
-local actionsPadding = Instance.new("UIPadding")
-actionsPadding.PaddingTop = UDim.new(0, 20)
-actionsPadding.PaddingBottom = UDim.new(0, 20)
-actionsPadding.PaddingLeft = UDim.new(0, 20)
-actionsPadding.PaddingRight = UDim.new(0, 20)
-actionsPadding.Parent = actionsSection
-
-local actionsTitle = Instance.new("TextLabel")
-actionsTitle.Name = "Title"
-actionsTitle.Size = UDim2.new(1, 0, 0, 20)
-actionsTitle.Position = UDim2.new(0, 0, 0, 0)
-actionsTitle.BackgroundTransparency = 1
-actionsTitle.Text = "Actions"
-actionsTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
-actionsTitle.TextSize = 14
-actionsTitle.Font = Enum.Font.GothamBold
-actionsTitle.TextXAlignment = Enum.TextXAlignment.Left
-actionsTitle.Parent = actionsSection
-
+-- Library button
 local dashboardButton = Instance.new("TextButton")
 dashboardButton.Name = "DashboardButton"
-dashboardButton.Size = UDim2.new(1, 0, 0, 40)
-dashboardButton.Position = UDim2.new(0, 0, 0, 30)
+dashboardButton.Size = UDim2.new(1, 0, 0, 36)
+dashboardButton.Position = UDim2.new(0, 0, 0, 102)
 dashboardButton.BackgroundColor3 = Color3.fromRGB(87, 75, 144)
 dashboardButton.BorderSizePixel = 0
 dashboardButton.Text = "📚 Library"
 dashboardButton.TextColor3 = Color3.new(1, 1, 1)
-dashboardButton.TextSize = 14
+dashboardButton.TextSize = 13
 dashboardButton.Font = Enum.Font.GothamBold
 dashboardButton.AutoButtonColor = false
-dashboardButton.Active = true
-dashboardButton.ZIndex = 5
-dashboardButton.Parent = actionsSection
+dashboardButton.Parent = combinedContent
 
 local dashboardCorner = Instance.new("UICorner")
 dashboardCorner.CornerRadius = UDim.new(0, 6)
 dashboardCorner.Parent = dashboardButton
 
+-- Save button
 local saveButton = Instance.new("TextButton")
 saveButton.Name = "SaveButton"
-saveButton.Size = UDim2.new(1, 0, 0, 40)
-saveButton.Position = UDim2.new(0, 0, 0, 80)
+saveButton.Size = UDim2.new(1, 0, 0, 36)
+saveButton.Position = UDim2.new(0, 0, 0, 144)
 saveButton.BackgroundColor3 = Color3.fromRGB(67, 181, 129)
 saveButton.BorderSizePixel = 0
 saveButton.Text = "💾 Save Game"
 saveButton.TextColor3 = Color3.new(1, 1, 1)
-saveButton.TextSize = 14
+saveButton.TextSize = 13
 saveButton.Font = Enum.Font.GothamBold
 saveButton.Visible = false
 saveButton.AutoButtonColor = false
-saveButton.Active = true
-saveButton.ZIndex = 5
-saveButton.Parent = actionsSection
+saveButton.Parent = combinedContent
 
 local saveCorner = Instance.new("UICorner")
 saveCorner.CornerRadius = UDim.new(0, 6)
 saveCorner.Parent = saveButton
 
+-- Leaderboard button
 local leaderboardButton = Instance.new("TextButton")
 leaderboardButton.Name = "LeaderboardButton"
-leaderboardButton.Size = UDim2.new(1, 0, 0, 40)
-leaderboardButton.Position = UDim2.new(0, 0, 0, 130)
+leaderboardButton.Size = UDim2.new(1, 0, 0, 36)
+leaderboardButton.Position = UDim2.new(0, 0, 0, 186)
 leaderboardButton.BackgroundColor3 = Color3.fromRGB(255, 165, 0)
 leaderboardButton.BorderSizePixel = 0
 leaderboardButton.Text = "🏆 Leaderboard"
 leaderboardButton.TextColor3 = Color3.new(1, 1, 1)
-leaderboardButton.TextSize = 14
+leaderboardButton.TextSize = 13
 leaderboardButton.Font = Enum.Font.GothamBold
 leaderboardButton.Visible = false
 leaderboardButton.AutoButtonColor = false
-leaderboardButton.Active = true
-leaderboardButton.ZIndex = 5
-leaderboardButton.Parent = actionsSection
+leaderboardButton.Parent = combinedContent
 
 local leaderboardCorner = Instance.new("UICorner")
 leaderboardCorner.CornerRadius = UDim.new(0, 6)
 leaderboardCorner.Parent = leaderboardButton
 
--- Controls info section
+-- Track combined section minimized state
+local isCombinedMinimized = false
+local combinedExpandedHeight = 300
+local combinedMinimizedHeight = 40
+
+local function toggleCombinedMinimize()
+	isCombinedMinimized = not isCombinedMinimized
+	
+	if isCombinedMinimized then
+		combinedMinimizeBtn.Text = "+"
+		TweenService:Create(combinedSection, TweenInfo.new(0.2), {
+			Size = UDim2.new(1, 0, 0, combinedMinimizedHeight)
+		}):Play()
+	else
+		combinedMinimizeBtn.Text = "−"
+		TweenService:Create(combinedSection, TweenInfo.new(0.2), {
+			Size = UDim2.new(1, 0, 0, combinedExpandedHeight)
+		}):Play()
+	end
+	
+	-- Update controls section position
+	task.spawn(function()
+		task.wait(0.21)
+		if isCombinedMinimized then
+			controlsSection.Position = UDim2.new(0, 0, 0, combinedMinimizedHeight + 20)
+			controlsSection.Size = UDim2.new(1, 0, 1, -(combinedMinimizedHeight + 20))
+		else
+			controlsSection.Position = UDim2.new(0, 0, 0, combinedExpandedHeight + 20)
+			controlsSection.Size = UDim2.new(1, 0, 1, -(combinedExpandedHeight + 20))
+		end
+	end)
+end
+
+combinedMinimizeBtn.MouseButton1Click:Connect(toggleCombinedMinimize)
+
+-- ============================================
+-- Controls Section (with movement toggle)
+-- ============================================
 local controlsSection = Instance.new("Frame")
 controlsSection.Name = "ControlsSection"
 controlsSection.Size = UDim2.new(1, 0, 1, -320)
@@ -408,10 +482,10 @@ controlsCorner.CornerRadius = UDim.new(0, 12)
 controlsCorner.Parent = controlsSection
 
 local controlsPadding = Instance.new("UIPadding")
-controlsPadding.PaddingTop = UDim.new(0, 20)
-controlsPadding.PaddingBottom = UDim.new(0, 20)
-controlsPadding.PaddingLeft = UDim.new(0, 20)
-controlsPadding.PaddingRight = UDim.new(0, 20)
+controlsPadding.PaddingTop = UDim.new(0, 15)
+controlsPadding.PaddingBottom = UDim.new(0, 15)
+controlsPadding.PaddingLeft = UDim.new(0, 15)
+controlsPadding.PaddingRight = UDim.new(0, 15)
 controlsPadding.Parent = controlsSection
 
 local controlsTitle = Instance.new("TextLabel")
@@ -428,17 +502,67 @@ controlsTitle.Parent = controlsSection
 
 local controlsInfo = Instance.new("TextLabel")
 controlsInfo.Name = "Info"
-controlsInfo.Size = UDim2.new(1, 0, 1, -30)
-controlsInfo.Position = UDim2.new(0, 0, 0, 30)
+controlsInfo.Size = UDim2.new(1, 0, 0, 80)
+controlsInfo.Position = UDim2.new(0, 0, 0, 25)
 controlsInfo.BackgroundTransparency = 1
 controlsInfo.Text = "Arrow Keys / WASD - D-Pad\nX - A Button\nZ - B Button\nEnter - Start\nRight Shift - Select"
 controlsInfo.TextColor3 = Color3.fromRGB(160, 160, 160)
-controlsInfo.TextSize = 12
+controlsInfo.TextSize = 11
 controlsInfo.Font = Enum.Font.Gotham
 controlsInfo.TextXAlignment = Enum.TextXAlignment.Left
 controlsInfo.TextYAlignment = Enum.TextYAlignment.Top
 controlsInfo.TextWrapped = true
 controlsInfo.Parent = controlsSection
+
+-- Movement Toggle Button
+local movementToggleBtn = Instance.new("TextButton")
+movementToggleBtn.Name = "MovementToggle"
+movementToggleBtn.Size = UDim2.new(1, 0, 0, 36)
+movementToggleBtn.Position = UDim2.new(0, 0, 0, 115)
+movementToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+movementToggleBtn.BorderSizePixel = 0
+movementToggleBtn.Text = "🔒 Movement Locked"
+movementToggleBtn.TextColor3 = Color3.new(1, 1, 1)
+movementToggleBtn.TextSize = 12
+movementToggleBtn.Font = Enum.Font.GothamBold
+movementToggleBtn.AutoButtonColor = false
+movementToggleBtn.Parent = controlsSection
+
+local movementToggleCorner = Instance.new("UICorner")
+movementToggleCorner.CornerRadius = UDim.new(0, 6)
+movementToggleCorner.Parent = movementToggleBtn
+
+-- Movement hint
+local movementHint = Instance.new("TextLabel")
+movementHint.Name = "MovementHint"
+movementHint.Size = UDim2.new(1, 0, 0, 24)
+movementHint.Position = UDim2.new(0, 0, 0, 155)
+movementHint.BackgroundTransparency = 1
+movementHint.Text = "Unlock to use GB Camera & explore"
+movementHint.TextColor3 = Color3.fromRGB(120, 120, 120)
+movementHint.TextSize = 10
+movementHint.Font = Enum.Font.Gotham
+movementHint.TextXAlignment = Enum.TextXAlignment.Center
+movementHint.Parent = controlsSection
+
+-- Movement toggle function
+local function toggleMovement()
+	movementLocked = not movementLocked
+	
+	if movementLocked then
+		playerControls:Disable()
+		movementToggleBtn.Text = "🔒 Movement Locked"
+		movementToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+		movementHint.Text = "Unlock to use GB Camera & explore"
+	else
+		playerControls:Enable()
+		movementToggleBtn.Text = "🔓 Movement Unlocked"
+		movementToggleBtn.BackgroundColor3 = Color3.fromRGB(80, 180, 100)
+		movementHint.Text = "Lock to prevent accidental movement"
+	end
+end
+
+movementToggleBtn.MouseButton1Click:Connect(toggleMovement)
 
 -- Status label (overlay on display)
 local statusLabel = Instance.new("TextLabel")
@@ -480,57 +604,9 @@ end
 addHoverEffect(loadButton, Color3.fromRGB(88, 101, 242), Color3.fromRGB(98, 111, 252))
 addHoverEffect(dashboardButton, Color3.fromRGB(87, 75, 144), Color3.fromRGB(97, 85, 154))
 addHoverEffect(saveButton, Color3.fromRGB(67, 181, 129), Color3.fromRGB(77, 191, 139))
-
-local controlsTitle = Instance.new("TextLabel")
-controlsTitle.Name = "ControlsTitle"
-controlsTitle.Size = UDim2.new(1, 0, 0, 20)
-controlsTitle.Position = UDim2.new(0, 0, 0, 0)
-controlsTitle.BackgroundTransparency = 1
-controlsTitle.Text = "Controls"
-controlsTitle.TextColor3 = Color3.new(1, 1, 1)
-controlsTitle.TextSize = 16
-controlsTitle.Font = Enum.Font.GothamBold
-controlsTitle.TextXAlignment = Enum.TextXAlignment.Left
-controlsTitle.Parent = controlsFrame
-
-local controlsText = Instance.new("TextLabel")
-controlsText.Name = "ControlsText"
-controlsText.Size = UDim2.new(1, 0, 1, -25)
-controlsText.Position = UDim2.new(0, 0, 0, 25)
-controlsText.BackgroundTransparency = 1
-controlsText.Text = "Arrow Keys/WASD: D-Pad\nX/Z: A/B Buttons\nEnter: Start\nRight Shift: Select"
-controlsText.TextColor3 = Color3.fromRGB(200, 200, 200)
-controlsText.TextSize = 12
-controlsText.Font = Enum.Font.Gotham
-controlsText.TextXAlignment = Enum.TextXAlignment.Left
-controlsText.TextYAlignment = Enum.TextYAlignment.Top
-controlsText.Parent = controlsFrame
-
--- Status message label (positioned after URL frame)
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Name = "StatusLabel"
-statusLabel.Size = UDim2.new(1, -20, 0, 30)
-statusLabel.Position = UDim2.new(0, 10, 0, 90)
-statusLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-statusLabel.BorderSizePixel = 0
-statusLabel.Text = ""
-statusLabel.TextColor3 = Color3.new(1, 1, 1)
-statusLabel.TextSize = 12
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-statusLabel.TextYAlignment = Enum.TextYAlignment.Center
-statusLabel.Visible = false
-statusLabel.ZIndex = 10
-statusLabel.Parent = mainFrame
-
-local statusCorner = Instance.new("UICorner")
-statusCorner.CornerRadius = UDim.new(0, 4)
-statusCorner.Parent = statusLabel
-
-local statusPadding = Instance.new("UIPadding")
-statusPadding.PaddingLeft = UDim.new(0, 10)
-statusPadding.PaddingRight = UDim.new(0, 10)
-statusPadding.Parent = statusLabel
+addHoverEffect(leaderboardButton, Color3.fromRGB(255, 165, 0), Color3.fromRGB(255, 180, 30))
+addHoverEffect(combinedMinimizeBtn, Color3.fromRGB(60, 60, 65), Color3.fromRGB(80, 80, 85))
+addHoverEffect(minimizeButton, Color3.fromRGB(60, 60, 65), Color3.fromRGB(80, 80, 85))
 
 -- Input map (same as server)
 local inputMap = {
@@ -623,7 +699,7 @@ local function onLoadRom()
 			statusLabel.Visible = true
 		end
 		loadButton.Text = "Load ROM"
-		loadButton.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
+		loadButton.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
 		loadButton.Active = true
 		return
 	end
@@ -632,7 +708,7 @@ local function onLoadRom()
 	task.spawn(function()
 		task.wait(5)
 		loadButton.Text = "Load ROM"
-		loadButton.BackgroundColor3 = Color3.fromRGB(0, 162, 255)
+		loadButton.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
 		loadButton.Active = true
 	end)
 end
@@ -643,6 +719,10 @@ urlTextBox.FocusLost:Connect(function(enterPressed)
 		onLoadRom()
 	end
 end)
+
+-- Track current game (declare before handlers)
+local currentGameId: string? = nil
+local currentGameLoaded = false
 
 -- Handle status messages from server
 RemoteEvents.StatusMessage.OnClientEvent:Connect(function(message: string, isInfo: boolean)
@@ -655,8 +735,9 @@ RemoteEvents.StatusMessage.OnClientEvent:Connect(function(message: string, isInf
 			statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
 		end
 		
-		-- Show save button when game starts
-		if message:find("Game starting") then
+		-- Show save button when game starts or reloads
+		if message:find("Game starting") or message:find("Game reloaded") then
+			print("[Gameboy Client] Game loaded/reloaded detected, showing save button")
 			currentGameLoaded = true
 			saveButton.Visible = true
 		end
@@ -751,12 +832,12 @@ print("[Gameboy Client] FrameData handler connected")
 
 -- Get dashboard module from ReplicatedStorage
 local dashboardModule
-local success, err = pcall(function()
+local dashSuccess, dashErr = pcall(function()
 	dashboardModule = require(ReplicatedStorage:WaitForChild("GameboyDashboard"))
 end)
 
-if not success then
-	warn("[Gameboy Client] Failed to load dashboard module:", err)
+if not dashSuccess then
+	warn("[Gameboy Client] Failed to load dashboard module:", dashErr)
 end
 
 -- Dashboard button click
@@ -781,13 +862,9 @@ saveButton.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Track current game (declare before handlers)
-local currentGameId: string? = nil
-local currentGameLoaded = false
-
 -- Show save button when game loads
 RemoteEvents.CurrentGameUpdate.OnClientEvent:Connect(function(gameId: string)
-	print("[Gameboy Client] CurrentGameUpdate received, gameId:", gameId)
+	print("[Gameboy Client] CurrentGameUpdate received, showing save button")
 	currentGameLoaded = true
 	currentGameId = gameId
 	saveButton.Visible = true
@@ -797,8 +874,6 @@ RemoteEvents.CurrentGameUpdate.OnClientEvent:Connect(function(gameId: string)
 	if audioClient then
 		audioClient.start()
 	end
-	
-	print("[Gameboy Client] currentGameId set to:", currentGameId)
 end)
 
 -- Get leaderboard module
@@ -856,6 +931,362 @@ RemoteEvents.ScoreSubmitted.OnClientEvent:Connect(function(gameId: string, score
 	end
 end)
 
--- Update existing StatusMessage handler to also show save button
--- (The handler is already defined above, so we'll modify it)
+-- Game Boy Camera capture handler
+local CameraService = Players
+local WorkspaceService = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 
+local CAMERA_WIDTH = 128
+local CAMERA_HEIGHT = 112
+
+-- Camera capture function (first-person view)
+local function captureCameraImage()
+    local player = CameraService.LocalPlayer
+    if not player then
+        warn("[GB Camera Client] No local player")
+        return nil
+    end
+    
+    local character = player.Character
+    if not character then
+        warn("[GB Camera Client] No character")
+        return nil
+    end
+    
+    local head = character:FindFirstChild("Head")
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    local cameraOrigin = head or humanoidRootPart
+    
+    if not cameraOrigin then
+        warn("[GB Camera Client] No camera origin (head/HRP)")
+        return nil
+    end
+    
+    -- Get camera orientation - use the actual workspace camera
+    local workspaceCamera = WorkspaceService.CurrentCamera
+    local cameraCFrame
+    
+    if workspaceCamera then
+        -- Use the actual camera CFrame but position at character's eye level
+        local eyeOffset = Vector3.new(0, 0.5, 0)  -- Slightly above head
+        cameraCFrame = CFrame.new(cameraOrigin.Position + eyeOffset) * 
+            workspaceCamera.CFrame.Rotation
+    else
+        cameraCFrame = cameraOrigin.CFrame
+    end
+    
+    local fov = workspaceCamera and workspaceCamera.FieldOfView or 70
+    local cameraAspectRatio = CAMERA_WIDTH / CAMERA_HEIGHT
+    
+    -- Raycast parameters - exclude the local character
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterDescendantsInstances = {character}
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    
+    local maxDistance = 1000  -- Increased distance
+    
+    -- Image buffer - use 1-indexed for proper serialization
+    local imageData = {}
+    
+    -- Track hit statistics for debugging
+    local hitCount = 0
+    local skyCount = 0
+    
+    -- Sample the scene using raycasting
+    for y = 0, CAMERA_HEIGHT - 1 do
+        imageData[y] = {}
+        for x = 0, CAMERA_WIDTH - 1 do
+            -- Convert pixel coordinates to normalized device coordinates (-1 to 1)
+            -- Center of pixel
+            local ndcX = ((x + 0.5) / CAMERA_WIDTH) * 2 - 1
+            local ndcY = 1 - ((y + 0.5) / CAMERA_HEIGHT) * 2  -- Flip Y
+            
+            -- Calculate ray direction based on FOV
+            local halfFov = math.rad(fov / 2)
+            local tanHalfFov = math.tan(halfFov)
+            
+            -- Local space direction (camera looks down -Z in Roblox)
+            local dirX = ndcX * tanHalfFov * cameraAspectRatio
+            local dirY = ndcY * tanHalfFov
+            local dirZ = -1  -- Forward in camera space
+            
+            -- Transform direction to world space
+            local localDir = Vector3.new(dirX, dirY, dirZ).Unit
+            local worldDir = cameraCFrame:VectorToWorldSpace(localDir)
+            
+            -- Perform raycast
+            local result = WorkspaceService:Raycast(cameraCFrame.Position, worldDir * maxDistance, raycastParams)
+            
+            if result then
+                hitCount = hitCount + 1
+                -- Get color from hit part
+                local part = result.Instance
+                local baseColor
+                
+                if part:IsA("BasePart") then
+                    baseColor = part.Color
+                elseif part:IsA("Terrain") then
+                    -- Get terrain material color
+                    local material = result.Material
+                    if material == Enum.Material.Grass then
+                        baseColor = Color3.fromRGB(80, 120, 60)
+                    elseif material == Enum.Material.Sand then
+                        baseColor = Color3.fromRGB(180, 160, 120)
+                    elseif material == Enum.Material.Rock then
+                        baseColor = Color3.fromRGB(100, 100, 100)
+                    elseif material == Enum.Material.Water then
+                        baseColor = Color3.fromRGB(60, 100, 140)
+                    else
+                        baseColor = Color3.fromRGB(100, 120, 80)
+                    end
+                else
+                    baseColor = Color3.new(0.5, 0.5, 0.5)
+                end
+                
+                -- Simple lighting simulation based on surface normal
+                local lightDir = Vector3.new(0.3, 0.8, 0.2).Unit
+                local lightIntensity = math.max(0, result.Normal:Dot(lightDir))
+                local ambient = 0.4  -- Increased ambient for better visibility
+                local diffuse = 0.6 * lightIntensity
+                local totalLight = ambient + diffuse
+                
+                local r = math.floor(baseColor.R * 255 * totalLight)
+                local g = math.floor(baseColor.G * 255 * totalLight)
+                local b = math.floor(baseColor.B * 255 * totalLight)
+                
+                -- Clamp values
+                r = math.min(255, math.max(0, r))
+                g = math.min(255, math.max(0, g))
+                b = math.min(255, math.max(0, b))
+                
+                imageData[y][x] = {r, g, b}
+            else
+                skyCount = skyCount + 1
+                -- Sky/background - use a darker sky color that varies with position
+                -- This creates a gradient and ensures the image isn't all the same color
+                local skyBrightness = 120 + math.floor((1 - y / CAMERA_HEIGHT) * 60)  -- Darker at top
+                imageData[y][x] = {skyBrightness, skyBrightness + 10, skyBrightness + 20}
+            end
+        end
+    end
+    
+    -- Debug output - only log occasionally
+    local totalPixels = CAMERA_WIDTH * CAMERA_HEIGHT
+    print(string.format("[GB Camera Client] Captured: %d hits (%.1f%%), %d sky (%.1f%%)", 
+        hitCount, hitCount/totalPixels*100, skyCount, skyCount/totalPixels*100))
+    
+    -- Sample a few pixels for debugging
+    if imageData[56] and imageData[56][64] then
+        local centerPixel = imageData[56][64]
+        print(string.format("[GB Camera Client] Center pixel: R=%d G=%d B=%d", 
+            centerPixel[1], centerPixel[2], centerPixel[3]))
+    end
+    
+    return imageData
+end
+
+-- Handle camera capture request from server
+-- Use WaitForChild directly from ReplicatedStorage to ensure we get the same instance
+-- Store the RemoteEvent in a module-level variable so we can verify it later
+local cameraCaptureRequestEvent = nil
+
+local function setupCameraHandler()
+    -- Get RemoteEvent directly from ReplicatedStorage (more reliable)
+    local captureRequest = ReplicatedStorage:WaitForChild("CameraCaptureRequest", 10)
+    if not captureRequest then
+        warn("[GB Camera Client] CameraCaptureRequest not found in ReplicatedStorage after waiting!")
+        task.spawn(function()
+            task.wait(1)
+            setupCameraHandler()
+        end)
+        return nil
+    end
+    
+    if not captureRequest:IsA("RemoteEvent") then
+        warn(string.format("[GB Camera Client] CameraCaptureRequest is not a RemoteEvent! Type: %s", captureRequest.ClassName))
+        return nil
+    end
+    
+    -- Store the instance for later verification
+    cameraCaptureRequestEvent = captureRequest
+    
+    print("[GB Camera Client] CameraCaptureRequest RemoteEvent found, connecting handler...")
+    print(string.format("[GB Camera Client] RemoteEvent: %s (Parent: %s)", 
+        captureRequest.Name, captureRequest.Parent and captureRequest.Parent.Name or "nil"))
+    
+    -- Also verify it matches the one from RemoteEvents module
+    if RemoteEvents and RemoteEvents.CameraCaptureRequest then
+        if RemoteEvents.CameraCaptureRequest == captureRequest then
+            print("[GB Camera Client] RemoteEvent matches module reference - OK")
+        else
+            warn("[GB Camera Client] RemoteEvent from ReplicatedStorage differs from module reference!")
+            print(string.format("[GB Camera Client] Module instance: %s, ReplicatedStorage instance: %s",
+                RemoteEvents.CameraCaptureRequest:GetFullName(),
+                captureRequest:GetFullName()))
+        end
+    end
+    
+    -- Test connection by checking if we can access the event
+    print(string.format("[GB Camera Client] Setting up OnClientEvent handler for %s", captureRequest:GetFullName()))
+    
+    -- Connect to the RemoteEvent
+    -- Note: If this is called multiple times, we'll have multiple handlers
+    -- but that's okay for now - they'll all fire and we can handle it
+    local connection = captureRequest.OnClientEvent:Connect(function()
+        print("[GB Camera Client] ========================================")
+        print("[GB Camera Client] *** Capture requested from server ***")
+        print(string.format("[GB Camera Client] Connection object: %s, RemoteEvent: %s", 
+            tostring(connection), captureRequest:GetFullName()))
+        print(string.format("[GB Camera Client] RemoteEvent Parent: %s", 
+            captureRequest.Parent and captureRequest.Parent.Name or "nil"))
+        print(string.format("[GB Camera Client] RemoteEvent instance ID: %s", 
+            tostring(captureRequest)))
+        print("[GB Camera Client] ========================================")
+        
+        -- Immediately log that we're entering the handler
+        print("[GB Camera Client] Handler function executing...")
+        
+        local captureSuccess, captureErr = pcall(function()
+            print("[GB Camera Client] Inside pcall, starting image capture...")
+            local imageData = captureCameraImage()
+            print(string.format("[GB Camera Client] captureCameraImage returned: %s", 
+                imageData and "non-nil" or "nil"))
+            
+            if not imageData then
+                warn("[GB Camera Client] captureCameraImage returned nil - cannot send to server")
+                return
+            end
+            
+            if imageData then
+                -- Count actual rows (0-indexed table)
+                local rowCount = 0
+                local pixelCount = 0
+                for camY = 0, CAMERA_HEIGHT - 1 do
+                    if imageData[camY] then
+                        rowCount = rowCount + 1
+                        for camX = 0, CAMERA_WIDTH - 1 do
+                            if imageData[camY][camX] then
+                                pixelCount = pixelCount + 1
+                            end
+                        end
+                    end
+                end
+                print(string.format("[GB Camera Client] Captured image: %d rows, %d pixels", rowCount, pixelCount))
+                
+                -- Debug: log center pixel before sending
+                if imageData[56] and imageData[56][64] then
+                    local p = imageData[56][64]
+                    print(string.format("[GB Camera Client] Center pixel before send: R=%d G=%d B=%d", p[1], p[2], p[3]))
+                end
+                
+                -- Verify RemoteEvent exists before firing
+                -- CRITICAL: Use the instance directly from ReplicatedStorage to ensure it's the same one the server is listening to
+                local responseEvent = ReplicatedStorage:WaitForChild("CameraCaptureResponse", 1)
+                
+                if not responseEvent then
+                    warn("[GB Camera Client] CameraCaptureResponse not found in ReplicatedStorage!")
+                    -- Fallback to module instance
+                    if RemoteEvents and RemoteEvents.CameraCaptureResponse then
+                        responseEvent = RemoteEvents.CameraCaptureResponse
+                        warn("[GB Camera Client] Using module instance as fallback")
+                    else
+                        warn("[GB Camera Client] CameraCaptureResponse RemoteEvent not found anywhere!")
+                        return
+                    end
+                end
+                
+                if not responseEvent:IsA("RemoteEvent") then
+                    warn(string.format("[GB Camera Client] CameraCaptureResponse is not a RemoteEvent! Type: %s", 
+                        responseEvent.ClassName))
+                    return
+                end
+                
+                print(string.format("[GB Camera Client] Firing CameraCaptureResponse to server using: %s", 
+                    responseEvent:GetFullName()))
+                local fireSuccess, fireErr = pcall(function()
+                    responseEvent:FireServer(imageData)
+                end)
+                if not fireSuccess then
+                    warn("[GB Camera Client] Failed to FireServer:", fireErr)
+                else
+                    print("[GB Camera Client] Successfully fired CameraCaptureResponse to server")
+                end
+            else
+                warn("[GB Camera Client] Failed to capture image - captureCameraImage returned nil")
+            end
+        end)
+        if not captureSuccess then
+            warn(string.format("[GB Camera Client] Error in capture handler: %s", tostring(captureErr)))
+            warn(string.format("[GB Camera Client] Error type: %s", type(captureErr)))
+            if type(captureErr) == "table" then
+                for k, v in pairs(captureErr) do
+                    warn(string.format("[GB Camera Client] Error[%s] = %s", tostring(k), tostring(v)))
+                end
+            end
+        else
+            print("[GB Camera Client] Capture handler completed successfully")
+        end
+    end)
+    
+    -- Verify connection was made
+    if connection then
+        print("[Gameboy Client] Camera capture handler connected successfully")
+        print(string.format("[GB Camera Client] Connection object: %s", tostring(connection)))
+        print(string.format("[GB Camera Client] Connection.Connected: %s", tostring(connection.Connected)))
+    else
+        warn("[GB Camera Client] Failed to create connection!")
+    end
+    
+    return connection
+end
+
+-- Setup camera handler (with retry logic)
+local cameraConnection = setupCameraHandler()
+
+-- Periodic check to verify connection is still active
+task.spawn(function()
+    task.wait(5) -- Wait for everything to initialize
+    if cameraConnection then
+        print(string.format("[GB Camera Client] Connection check: Connected=%s, Valid=%s", 
+            tostring(cameraConnection.Connected),
+            tostring(cameraConnection and typeof(cameraConnection) == "RBXScriptConnection")))
+    else
+        warn("[GB Camera Client] Connection check: Connection is nil!")
+        -- Try to reconnect
+        print("[GB Camera Client] Attempting to reconnect...")
+        cameraConnection = setupCameraHandler()
+    end
+end)
+
+-- Test: Verify RemoteEvent is accessible and can receive events
+task.spawn(function()
+    task.wait(2) -- Wait for everything to initialize
+    local testEvent = ReplicatedStorage:FindFirstChild("CameraCaptureRequest")
+    if testEvent then
+        print(string.format("[GB Camera Client] Test: RemoteEvent found: %s, Parent: %s, ClassName: %s", 
+            testEvent.Name, 
+            testEvent.Parent and testEvent.Parent.Name or "nil",
+            testEvent.ClassName))
+        
+        -- Verify it's the same instance we're listening to
+        if cameraCaptureRequestEvent and testEvent == cameraCaptureRequestEvent then
+            print("[GB Camera Client] Test: RemoteEvent instance matches handler - OK")
+        else
+            warn("[GB Camera Client] Test: RemoteEvent instance MISMATCH! Handler may not work!")
+            if cameraCaptureRequestEvent then
+                print(string.format("[GB Camera Client] Test: Handler instance: %s, Test instance: %s",
+                    cameraCaptureRequestEvent:GetFullName(),
+                    testEvent:GetFullName()))
+            else
+                warn("[GB Camera Client] Test: cameraCaptureRequestEvent is nil - handler not set up!")
+            end
+        end
+        
+        -- Try to manually trigger to test connection
+        -- (This is just for debugging - we can't actually fire it from client)
+        print(string.format("[GB Camera Client] Test: Connection object exists: %s", 
+            testEvent.OnClientEvent and "YES" or "NO"))
+    else
+        warn("[GB Camera Client] Test: CameraCaptureRequest NOT FOUND in ReplicatedStorage!")
+    end
+end)

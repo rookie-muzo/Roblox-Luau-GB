@@ -54,5 +54,9 @@ RemoteEvents.ScoreSubmitted = getOrCreateRemoteEvent("ScoreSubmitted")
 RemoteEvents.AudioChannelUpdate = getOrCreateRemoteEvent("AudioChannelUpdate")
 RemoteEvents.AudioReset = getOrCreateRemoteEvent("AudioReset")
 
+-- RemoteEvent for Game Boy Camera capture (server -> client request, client -> server response)
+RemoteEvents.CameraCaptureRequest = getOrCreateRemoteEvent("CameraCaptureRequest")
+RemoteEvents.CameraCaptureResponse = getOrCreateRemoteEvent("CameraCaptureResponse")
+
 return RemoteEvents
 

@@ -129,22 +129,37 @@ function Cache.new(graphics)
         map_attr[x][y].priority = bit32.rshift(bit32.band(data, 0x80), 7) ~= 0
     end
 
+    -- Optimized: Use bit32 for floor division, cache locals, remove nil checks
     cache.refreshTile = function(address, bank)
-        -- Update the cached tile data
-        local tile_index = math.floor((address - 0x8000) / 16) + (384 * bank)
-        local y = math.floor((address % 16) / 2)
-        -- kill the lower bit
-        address = bit32.band(address, 0xFFFE)
-        local lower_bits = graphics.vram[address + (16 * 1024 * bank)]
-        local upper_bits = graphics.vram[address + (16 * 1024 * bank) + 1]
-        -- Handle nil values (can occur during save state loading)
-        lower_bits = lower_bits or 0
-        upper_bits = upper_bits or 0
-        for x = 0, 7 do
-            local palette_index = bit32.band(bit32.rshift(lower_bits, 7 - x), 0x1) + (bit32.band(bit32.rshift(upper_bits, 7 - x), 0x1) * 2)
-            cache.tiles[tile_index][x][y] = palette_index
-            cache.tiles_h_flipped[tile_index][7 - x][y] = palette_index
-        end
+        local tile_index = bit32.rshift(address - 0x8000, 4) + (384 * bank)
+        local y = bit32.rshift(bit32.band(address, 0xF), 1)
+        local aligned_addr = bit32.band(address, 0xFFFE)
+        local bank_offset = 16384 * bank
+        local vram = graphics.vram
+        local lower_bits = vram[aligned_addr + bank_offset] or 0
+        local upper_bits = vram[aligned_addr + bank_offset + 1] or 0
+        
+        local tile_row = cache.tiles[tile_index]
+        local tile_row_flipped = cache.tiles_h_flipped[tile_index]
+        
+        -- Unroll the loop for better performance
+        local p0 = bit32.band(bit32.rshift(lower_bits, 7), 1) + bit32.band(bit32.rshift(upper_bits, 6), 2)
+        local p1 = bit32.band(bit32.rshift(lower_bits, 6), 1) + bit32.band(bit32.rshift(upper_bits, 5), 2)
+        local p2 = bit32.band(bit32.rshift(lower_bits, 5), 1) + bit32.band(bit32.rshift(upper_bits, 4), 2)
+        local p3 = bit32.band(bit32.rshift(lower_bits, 4), 1) + bit32.band(bit32.rshift(upper_bits, 3), 2)
+        local p4 = bit32.band(bit32.rshift(lower_bits, 3), 1) + bit32.band(bit32.rshift(upper_bits, 2), 2)
+        local p5 = bit32.band(bit32.rshift(lower_bits, 2), 1) + bit32.band(bit32.rshift(upper_bits, 1), 2)
+        local p6 = bit32.band(bit32.rshift(lower_bits, 1), 1) + bit32.band(upper_bits, 2)
+        local p7 = bit32.band(lower_bits, 1) + bit32.lshift(bit32.band(upper_bits, 1), 1)
+        
+        tile_row[0][y] = p0; tile_row_flipped[7][y] = p0
+        tile_row[1][y] = p1; tile_row_flipped[6][y] = p1
+        tile_row[2][y] = p2; tile_row_flipped[5][y] = p2
+        tile_row[3][y] = p3; tile_row_flipped[4][y] = p3
+        tile_row[4][y] = p4; tile_row_flipped[3][y] = p4
+        tile_row[5][y] = p5; tile_row_flipped[2][y] = p5
+        tile_row[6][y] = p6; tile_row_flipped[1][y] = p6
+        tile_row[7][y] = p7; tile_row_flipped[0][y] = p7
     end
 
     cache.refreshTiles = function()

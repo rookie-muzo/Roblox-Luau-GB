@@ -6,21 +6,13 @@ local function apply(opcodes, opcode_cycles, z80, memory)
     local reg = z80.registers
     local flags = reg.flags
 
+    -- Optimized: Remove nil checks and use bit32 for modulo
     local cp_with_a = function(value)
-        -- Handle nil values (can occur during save state loading)
-        local a_value = reg.a or 0
-        local compare_value = value or 0
-        
-        -- half-carry
-        flags.h = (a_value % 0x10) - (compare_value % 0x10) < 0
-
-        local temp = a_value - compare_value
-
-        -- carry (and overflow correction)
-        flags.c = temp < 0 or temp > 0xFF
-        temp = (temp + 0x100) % 0x100
-
-        flags.z = temp == 0
+        local a = reg.a
+        flags.h = bit32.band(a, 0xF) - bit32.band(value, 0xF) < 0
+        local temp = a - value
+        flags.c = temp < 0
+        flags.z = bit32.band(temp, 0xFF) == 0
         flags.n = true
     end
 

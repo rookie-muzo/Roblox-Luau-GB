@@ -160,15 +160,18 @@ function Z80.new(modules)
         opcode_cycles[i] = 4
     end
 
+    -- Optimized: Cache block_map locally and remove nil checks
+    -- Registers are always valid during normal operation
+    local block_map = memory.block_map
+    
     function z80.read_at_hl()
-        return memory.block_map[reg.h * 0x100][reg.h * 0x100 + reg.l]
+        local addr = reg.h * 256 + reg.l
+        return block_map[bit32.band(addr, 0xFF00)][addr]
     end
 
     function z80.set_at_hl(value)
-        -- Handle nil values (can occur during save state loading)
-        local h = reg.h or 0
-        local l = reg.l or 0
-        memory.block_map[h * 0x100][h * 0x100 + l] = value
+        local addr = reg.h * 256 + reg.l
+        block_map[bit32.band(addr, 0xFF00)][addr] = value
     end
 
     function z80.read_nn()
@@ -321,52 +324,18 @@ function Z80.new(modules)
         end
     end
 
+    -- Optimized: Remove defensive nil checks from hot path.
+    -- All opcodes are guaranteed to be defined by initialization.
+    -- read_byte always returns a valid value (0x00 for unmapped).
     z80.process_instruction = function()
-        --  If the processor is currently halted, then do nothing.
         if z80.halted == 0 then
             local opcode = read_byte(reg.pc)
-            
-            -- Check if opcode is valid
-            if opcode == nil then
-                print(string.format("[Z80] ERROR: read_byte returned nil at PC 0x%04X", reg.pc))
-                -- Use NOP as fallback
-                if opcodes[0x00] then
-                    opcodes[0x00]()
-                end
-                z80.add_cycles(4)
-                return
-            end
-            
-            -- Ensure opcode is in valid range
-            opcode = bit32.band(opcode, 0xFF)
-            
-            -- Advance to one byte beyond the opcode
             reg.pc = bit32.band(reg.pc + 1, 0xFFFF)
-            
-            -- Run the instruction (all opcodes should be defined by the loop above)
-            local opcode_handler = opcodes[opcode]
-            if opcode_handler then
-                opcode_handler()
-            else
-                -- This should never happen if initialization worked, but handle it gracefully
-                local pc_before = bit32.band(reg.pc - 1, 0xFFFF)
-                print(string.format("[Z80] ERROR: Opcode 0x%02X at PC 0x%04X is nil! This should not happen.", opcode or 0, pc_before))
-                -- Try to use a safe default
-                if opcodes[0x00] then
-                    opcodes[0x00]() -- NOP as fallback
-                end
-            end
-
-            -- add a base clock of 4 to every instruction
-            -- NOPE, working on removing add_cycles, pull from the opcode_cycles
-            -- table instead
+            opcodes[opcode]()
             z80.add_cycles(opcode_cycles[opcode])
         else
-            -- Base cycles of 4 when halted, for sanity
             z80.add_cycles(4)
         end
-
-        return true
     end
 
     return z80

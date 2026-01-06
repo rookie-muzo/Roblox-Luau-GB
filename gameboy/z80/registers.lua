@@ -40,27 +40,22 @@ function Registers.new()
         reg.flags.c = bit32.band(value, 0x10) ~= 0
     end
 
+    -- Optimized: Remove nil checks - registers are always initialized to 0
+    -- and should never be nil during normal operation. This is a hot path.
     reg.af = function()
-        local a = reg.a or 0
-        return bit32.lshift(a, 8) + reg.f()
+        return reg.a * 256 + reg.f()
     end
 
     reg.bc = function()
-        local b = reg.b or 0
-        local c = reg.c or 0
-        return bit32.lshift(b, 8) + c
+        return reg.b * 256 + reg.c
     end
 
     reg.de = function()
-        local d = reg.d or 0
-        local e = reg.e or 0
-        return bit32.lshift(d, 8) + e
+        return reg.d * 256 + reg.e
     end
 
     reg.hl = function()
-        local h = reg.h or 0
-        local l = reg.l or 0
-        return bit32.lshift(h, 8) + l
+        return reg.h * 256 + reg.l
     end
 
     reg.set_bc = function(value)

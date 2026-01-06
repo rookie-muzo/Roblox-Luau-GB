@@ -401,103 +401,61 @@ local function apply(opcodes, opcode_cycles, z80, memory)
         return
     end
 
+    -- Optimized: Pre-compute bit masks and use elseif chains for better branch prediction
+    local bit_masks = {}
+    local inv_bit_masks = {}
+    for i = 0, 7 do
+        bit_masks[i] = bit32.lshift(1, i)
+        inv_bit_masks[i] = bit32.bnot(bit_masks[i])
+    end
+
     opcodes[0xCB] = function()
         local cb_op = read_nn()
-        add_cycles(4)
-        if cb[cb_op] ~= nil then
-            --revert the timing; this is handled automatically by the various functions
-            add_cycles(-4)
-            cb[cb_op]()
+        local cb_handler = cb[cb_op]
+        if cb_handler then
+            cb_handler()
             return
         end
-        local high_half_nybble = bit32.rshift(bit32.band(cb_op, 0xC0), 6)
+        
+        add_cycles(4)
+        local high_half_nybble = bit32.rshift(cb_op, 6)
         local reg_index = bit32.band(cb_op, 0x7)
         local bit = bit32.rshift(bit32.band(cb_op, 0x38), 3)
-        if high_half_nybble == 0x1 then
-            -- bit n,r
-            if reg_index == 0 then
-                reg_bit(reg.b, bit)
+        local mask = bit_masks[bit]
+        
+        if high_half_nybble == 1 then
+            -- BIT n,r - test bit
+            if reg_index == 0 then reg_bit(reg.b, bit)
+            elseif reg_index == 1 then reg_bit(reg.c, bit)
+            elseif reg_index == 2 then reg_bit(reg.d, bit)
+            elseif reg_index == 3 then reg_bit(reg.e, bit)
+            elseif reg_index == 4 then reg_bit(reg.h, bit)
+            elseif reg_index == 5 then reg_bit(reg.l, bit)
+            elseif reg_index == 6 then reg_bit(read_byte(reg.hl()), bit); add_cycles(4)
+            else reg_bit(reg.a, bit)
             end
-            if reg_index == 1 then
-                reg_bit(reg.c, bit)
+        elseif high_half_nybble == 2 then
+            -- RES n,r - reset bit (use AND with inverted mask)
+            local inv_mask = inv_bit_masks[bit]
+            if reg_index == 0 then reg.b = bit32.band(reg.b, inv_mask)
+            elseif reg_index == 1 then reg.c = bit32.band(reg.c, inv_mask)
+            elseif reg_index == 2 then reg.d = bit32.band(reg.d, inv_mask)
+            elseif reg_index == 3 then reg.e = bit32.band(reg.e, inv_mask)
+            elseif reg_index == 4 then reg.h = bit32.band(reg.h, inv_mask)
+            elseif reg_index == 5 then reg.l = bit32.band(reg.l, inv_mask)
+            elseif reg_index == 6 then write_byte(reg.hl(), bit32.band(read_byte(reg.hl()), inv_mask)); add_cycles(8)
+            else reg.a = bit32.band(reg.a, inv_mask)
             end
-            if reg_index == 2 then
-                reg_bit(reg.d, bit)
-            end
-            if reg_index == 3 then
-                reg_bit(reg.e, bit)
-            end
-            if reg_index == 4 then
-                reg_bit(reg.h, bit)
-            end
-            if reg_index == 5 then
-                reg_bit(reg.l, bit)
-            end
-            if reg_index == 6 then
-                reg_bit(read_byte(reg.hl()), bit)
-                add_cycles(4)
-            end
-            if reg_index == 7 then
-                reg_bit(reg.a, bit)
-            end
-        end
-        if high_half_nybble == 0x2 then
-            -- res n, r
-            -- note: this is REALLY stupid, but it works around some floating point
-            -- limitations in Lua.
-            if reg_index == 0 then
-                reg.b = bit32.band(reg.b, bit32.bxor(reg.b, bit32.lshift(0x1, bit)))
-            end
-            if reg_index == 1 then
-                reg.c = bit32.band(reg.c, bit32.bxor(reg.c, bit32.lshift(0x1, bit)))
-            end
-            if reg_index == 2 then
-                reg.d = bit32.band(reg.d, bit32.bxor(reg.d, bit32.lshift(0x1, bit)))
-            end
-            if reg_index == 3 then
-                reg.e = bit32.band(reg.e, bit32.bxor(reg.e, bit32.lshift(0x1, bit)))
-            end
-            if reg_index == 4 then
-                reg.h = bit32.band(reg.h, bit32.bxor(reg.h, bit32.lshift(0x1, bit)))
-            end
-            if reg_index == 5 then
-                reg.l = bit32.band(reg.l, bit32.bxor(reg.l, bit32.lshift(0x1, bit)))
-            end
-            if reg_index == 6 then
-                write_byte(reg.hl(), bit32.band(read_byte(reg.hl()), bit32.bxor(read_byte(reg.hl()), bit32.lshift(0x1, bit))))
-                add_cycles(8)
-            end
-            if reg_index == 7 then
-                reg.a = bit32.band(reg.a, bit32.bxor(reg.a, bit32.lshift(0x1, bit)))
-            end
-        end
-
-        if high_half_nybble == 0x3 then
-            -- set n, r
-            if reg_index == 0 then
-                reg.b = bit32.bor(bit32.lshift(0x1, bit), reg.b)
-            end
-            if reg_index == 1 then
-                reg.c = bit32.bor(bit32.lshift(0x1, bit), reg.c)
-            end
-            if reg_index == 2 then
-                reg.d = bit32.bor(bit32.lshift(0x1, bit), reg.d)
-            end
-            if reg_index == 3 then
-                reg.e = bit32.bor(bit32.lshift(0x1, bit), reg.e)
-            end
-            if reg_index == 4 then
-                reg.h = bit32.bor(bit32.lshift(0x1, bit), reg.h)
-            end
-            if reg_index == 5 then
-                reg.l = bit32.bor(bit32.lshift(0x1, bit), reg.l)
-            end
-            if reg_index == 6 then
-                write_byte(reg.hl(), bit32.bor(bit32.lshift(0x1, bit), read_byte(reg.hl())))
-                add_cycles(8)
-            end
-            if reg_index == 7 then
-                reg.a = bit32.bor(bit32.lshift(0x1, bit), reg.a)
+        elseif high_half_nybble == 3 then
+            -- SET n,r - set bit (use OR with mask)
+            if reg_index == 0 then reg.b = bit32.bor(reg.b, mask)
+            elseif reg_index == 1 then reg.c = bit32.bor(reg.c, mask)
+            elseif reg_index == 2 then reg.d = bit32.bor(reg.d, mask)
+            elseif reg_index == 3 then reg.e = bit32.bor(reg.e, mask)
+            elseif reg_index == 4 then reg.h = bit32.bor(reg.h, mask)
+            elseif reg_index == 5 then reg.l = bit32.bor(reg.l, mask)
+            elseif reg_index == 6 then write_byte(reg.hl(), bit32.bor(read_byte(reg.hl()), mask)); add_cycles(8)
+            else reg.a = bit32.bor(reg.a, mask)
             end
         end
     end

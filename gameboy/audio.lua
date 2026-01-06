@@ -122,11 +122,162 @@ function Audio.new(modules)
     audio.save_state = function()
         local state = {}
         state.next_sample_cycle = next_sample_cycle
+        state.next_sample = next_sample
+        
+        -- Save Channel 1 (Tone with sweep) state
+        state.tone1 = {
+            period = audio.tone1.period,
+            volume_initial = audio.tone1.volume_initial,
+            volume_direction = audio.tone1.volume_direction,
+            volume_step_length = audio.tone1.volume_step_length,
+            max_length = audio.tone1.max_length,
+            continuous = audio.tone1.continuous,
+            duty_length = audio.tone1.duty_length,
+            wave_pattern = audio.tone1.wave_pattern,
+            base_cycle = audio.tone1.base_cycle,
+            frequency_last_update = audio.tone1.frequency_last_update,
+            wave_duty_counter = audio.tone1.wave_duty_counter,
+            period_counter = audio.tone1.period_counter,
+            frequency_target = audio.tone1.frequency_target,
+            frequency_shadow = audio.tone1.frequency_shadow,
+            frequency_shift_time = audio.tone1.frequency_shift_time,
+            frequency_shift_counter = audio.tone1.frequency_shift_counter,
+            frequency_shift_direction = audio.tone1.frequency_shift_direction,
+            frequency_shift_amount = audio.tone1.frequency_shift_amount,
+            active = audio.tone1.active,
+        }
+        
+        -- Save Channel 2 (Tone) state
+        state.tone2 = {
+            period = audio.tone2.period,
+            volume_initial = audio.tone2.volume_initial,
+            volume_direction = audio.tone2.volume_direction,
+            volume_step_length = audio.tone2.volume_step_length,
+            max_length = audio.tone2.max_length,
+            continuous = audio.tone2.continuous,
+            duty_length = audio.tone2.duty_length,
+            wave_pattern = audio.tone2.wave_pattern,
+            base_cycle = audio.tone2.base_cycle,
+            frequency_last_update = audio.tone2.frequency_last_update,
+            period_counter = audio.tone2.period_counter,
+            wave_duty_counter = audio.tone2.wave_duty_counter,
+            frequency_shadow = audio.tone2.frequency_shadow,
+            active = audio.tone2.active,
+        }
+        
+        -- Save Channel 3 (Wave) state
+        state.wave3 = {
+            enabled = audio.wave3.enabled,
+            max_length = audio.wave3.max_length,
+            volume_shift = audio.wave3.volume_shift,
+            period = audio.wave3.period,
+            continuous = audio.wave3.continuous,
+            base_cycle = audio.wave3.base_cycle,
+            frequency_last_update = audio.wave3.frequency_last_update,
+            period_counter = audio.wave3.period_counter,
+            sample_index = audio.wave3.sample_index,
+            frequency_shadow = audio.wave3.frequency_shadow,
+            active = audio.wave3.active,
+        }
+        
+        -- Save Channel 4 (Noise) state
+        state.noise4 = {
+            volume_initial = audio.noise4.volume_initial,
+            volume_direction = audio.noise4.volume_direction,
+            volume_step_length = audio.noise4.volume_step_length,
+            max_length = audio.noise4.max_length,
+            continuous = audio.noise4.continuous,
+            base_cycle = audio.noise4.base_cycle,
+            polynomial_period = audio.noise4.polynomial_period,
+            polynomial_lfsr = audio.noise4.polynomial_lfsr,
+            polynomial_last_shift = audio.noise4.polynomial_last_shift,
+            polynomial_wide = audio.noise4.polynomial_wide,
+            active = audio.noise4.active,
+        }
+        
         return state
     end
 
     audio.load_state = function(state)
-        next_sample_cycle = state.next_sample_cycle
+        if not state then return end
+        
+        next_sample_cycle = state.next_sample_cycle or 0
+        next_sample = state.next_sample or 0
+        
+        -- Load Channel 1 state
+        if state.tone1 then
+            local t1 = state.tone1
+            audio.tone1.period = t1.period or 128
+            audio.tone1.volume_initial = t1.volume_initial or 0
+            audio.tone1.volume_direction = t1.volume_direction or 1
+            audio.tone1.volume_step_length = t1.volume_step_length or 0
+            audio.tone1.max_length = t1.max_length or 0
+            audio.tone1.continuous = t1.continuous or false
+            audio.tone1.duty_length = t1.duty_length or 0.75
+            audio.tone1.wave_pattern = t1.wave_pattern or 0
+            audio.tone1.base_cycle = t1.base_cycle or 0
+            audio.tone1.frequency_last_update = t1.frequency_last_update or 0
+            audio.tone1.wave_duty_counter = t1.wave_duty_counter or 0
+            audio.tone1.period_counter = t1.period_counter or 0
+            audio.tone1.frequency_target = t1.frequency_target or 0
+            audio.tone1.frequency_shadow = t1.frequency_shadow or 0
+            audio.tone1.frequency_shift_time = t1.frequency_shift_time or 0
+            audio.tone1.frequency_shift_counter = t1.frequency_shift_counter or 0
+            audio.tone1.frequency_shift_direction = t1.frequency_shift_direction or 1
+            audio.tone1.frequency_shift_amount = t1.frequency_shift_amount or 0
+            audio.tone1.active = t1.active or false
+        end
+        
+        -- Load Channel 2 state
+        if state.tone2 then
+            local t2 = state.tone2
+            audio.tone2.period = t2.period or 128
+            audio.tone2.volume_initial = t2.volume_initial or 0
+            audio.tone2.volume_direction = t2.volume_direction or 1
+            audio.tone2.volume_step_length = t2.volume_step_length or 0
+            audio.tone2.max_length = t2.max_length or 0
+            audio.tone2.continuous = t2.continuous or false
+            audio.tone2.duty_length = t2.duty_length or 0.75
+            audio.tone2.wave_pattern = t2.wave_pattern or 0
+            audio.tone2.base_cycle = t2.base_cycle or 0
+            audio.tone2.frequency_last_update = t2.frequency_last_update or 0
+            audio.tone2.period_counter = t2.period_counter or 0
+            audio.tone2.wave_duty_counter = t2.wave_duty_counter or 0
+            audio.tone2.frequency_shadow = t2.frequency_shadow or 0
+            audio.tone2.active = t2.active or false
+        end
+        
+        -- Load Channel 3 state
+        if state.wave3 then
+            local w3 = state.wave3
+            audio.wave3.enabled = w3.enabled or false
+            audio.wave3.max_length = w3.max_length or 0
+            audio.wave3.volume_shift = w3.volume_shift or 0
+            audio.wave3.period = w3.period or 0
+            audio.wave3.continuous = w3.continuous or false
+            audio.wave3.base_cycle = w3.base_cycle or 0
+            audio.wave3.frequency_last_update = w3.frequency_last_update or 0
+            audio.wave3.period_counter = w3.period_counter or 0
+            audio.wave3.sample_index = w3.sample_index or 0
+            audio.wave3.frequency_shadow = w3.frequency_shadow or 0
+            audio.wave3.active = w3.active or false
+        end
+        
+        -- Load Channel 4 state
+        if state.noise4 then
+            local n4 = state.noise4
+            audio.noise4.volume_initial = n4.volume_initial or 0
+            audio.noise4.volume_direction = n4.volume_direction or 1
+            audio.noise4.volume_step_length = n4.volume_step_length or 0
+            audio.noise4.max_length = n4.max_length or 0
+            audio.noise4.continuous = n4.continuous or false
+            audio.noise4.base_cycle = n4.base_cycle or 0
+            audio.noise4.polynomial_period = n4.polynomial_period or 16
+            audio.noise4.polynomial_lfsr = n4.polynomial_lfsr or 0x7FFF
+            audio.noise4.polynomial_last_shift = n4.polynomial_last_shift or 0
+            audio.noise4.polynomial_wide = n4.polynomial_wide ~= false
+            audio.noise4.active = n4.active or false
+        end
     end
 
     audio.debug = {}

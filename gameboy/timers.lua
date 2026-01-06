@@ -47,23 +47,30 @@ function Timers.new(modules)
         timers.timer_offset = timers.system_clock
     end
 
+    -- Optimized: Cache ports and remove nil checks
+    local ports = io.ports
+    local TIMA = ports.TIMA
+    local TMA = ports.TMA
+    local TAC = ports.TAC
+    
     function timers:update()
         if self.timer_enabled then
-            local tac = io.ram[io.ports.TAC] or 0
-            local rate_select = bit32.band(tac, 0x3)
-            while self.system_clock > self.timer_offset + self.clock_rates[rate_select] do
-                local tima = io.ram[io.ports.TIMA] or 0
-                io.ram[io.ports.TIMA] = bit32.band(tima + 1, 0xFF)
-                self.timer_offset += self.clock_rates[rate_select]
+            local ram = io.ram
+            local rate = self.clock_rates[bit32.band(ram[TAC], 0x3)]
+            local system_clock = self.system_clock
+            local timer_offset = self.timer_offset
+            
+            while system_clock > timer_offset + rate do
+                local tima = bit32.band(ram[TIMA] + 1, 0xFF)
+                ram[TIMA] = tima
+                timer_offset = timer_offset + rate
 
-                if io.ram[io.ports.TIMA] == 0x00 then
-                    --overflow happened, first reset TIMA to TMA
-                    local tma = io.ram[io.ports.TMA] or 0
-                    io.ram[io.ports.TIMA] = tma
-                    --then, fire off the timer interrupt
+                if tima == 0 then
+                    ram[TIMA] = ram[TMA]
                     interrupts.raise(interrupts.Timer)
                 end
             end
+            self.timer_offset = timer_offset
         end
     end
 

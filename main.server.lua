@@ -619,6 +619,12 @@ local function initializePlayerEmulator(player: Player)
 	end
 
 	local gb = Gameboy.new()
+	
+	-- Set player reference for camera module (server-side)
+	if gb.camera and gb.camera.setPlayer then
+		gb.camera.setPlayer(player)
+	end
+	
 	local frameBuffer = buffer.create(WIDTH * HEIGHT * 4)
 	buffer.fill(frameBuffer, 0, 255)
 
@@ -1342,6 +1348,9 @@ RemoteEvents.ReloadGame.OnServerEvent:Connect(function(player: Player, gameId: s
 			
 			emulatorData.runner = task.defer(runEmulatorThread, player)
 			
+			-- Notify client of current game (so save button appears)
+			RemoteEvents.CurrentGameUpdate:FireClient(player, gameId)
+			
 			-- Recreate ProximityPrompt
 			task.spawn(function()
 				if not player.Character then
@@ -1437,6 +1446,69 @@ RemoteEvents.StopSpectating.OnServerEvent:Connect(function(spectator: Player)
 	
 	print("[Gameboy] Player", spectator.Name, "stopped spectating", targetPlayer.Name)
 end)
+
+-- Handle camera capture response from client
+print("[GB Camera Server] Setting up CameraCaptureResponse OnServerEvent handler...")
+local cameraResponseHandler = RemoteEvents.CameraCaptureResponse.OnServerEvent:Connect(function(player: Player, imageData)
+	print(string.format("[GB Camera Server] ========================================"))
+	print(string.format("[GB Camera Server] OnServerEvent triggered for player %s", player.Name))
+	
+	local emulatorData = playerEmulators[player]
+	if not emulatorData then
+		warn(string.format("[GB Camera Server] No emulator data found for player %s", player.Name))
+		return
+	end
+	
+	if not emulatorData.gameboy then
+		warn(string.format("[GB Camera Server] No gameboy instance found for player %s", player.Name))
+		return
+	end
+	
+	if not emulatorData.gameboy.camera then
+		warn(string.format("[GB Camera Server] No camera instance found for player %s", player.Name))
+		return
+	end
+	
+	print(string.format("[GB Camera Server] Received capture from %s, routing to camera instance", player.Name))
+	
+	-- Verify imageData structure
+	if imageData then
+		local rowCount = 0
+		for y = 0, 111 do
+			if imageData[y] then
+				rowCount = rowCount + 1
+			end
+		end
+		print(string.format("[GB Camera Server] Image data received: %d rows", rowCount))
+		
+		-- Sample center pixel
+		if imageData[56] and imageData[56][64] then
+			local p = imageData[56][64]
+			print(string.format("[GB Camera Server] Center pixel: R=%d G=%d B=%d", p[1] or 0, p[2] or 0, p[3] or 0))
+		end
+	else
+		warn(string.format("[GB Camera Server] Image data is nil for player %s", player.Name))
+		return
+	end
+	
+	-- Set pending capture
+	if emulatorData.gameboy.camera.setPendingCapture then
+		print(string.format("[GB Camera Server] Using setPendingCapture method"))
+		emulatorData.gameboy.camera.setPendingCapture(imageData)
+	else
+		-- Fallback: set directly
+		print(string.format("[GB Camera Server] Using direct assignment (fallback)"))
+		emulatorData.gameboy.camera.pendingCapture = imageData
+		emulatorData.gameboy.camera.captureInProgress = false
+	end
+	
+	print(string.format("[GB Camera Server] Pending capture set successfully"))
+	print(string.format("[GB Camera Server] ========================================"))
+end)
+print(string.format("[GB Camera Server] CameraCaptureResponse handler connected: %s", 
+	tostring(cameraResponseHandler)))
+print(string.format("[GB Camera Server] RemoteEvent instance: %s", 
+	RemoteEvents.CameraCaptureResponse:GetFullName()))
 
 -- Handle get leaderboard
 RemoteEvents.GetLeaderboard.OnServerEvent:Connect(function(player: Player, gameId: string)

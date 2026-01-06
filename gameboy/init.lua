@@ -2,6 +2,7 @@
 local Gameboy = {}
 
 Gameboy.audio = require(script.audio)
+Gameboy.camera = require(script.camera)
 Gameboy.cartridge = require(script.cartridge)
 Gameboy.dma = require(script.dma)
 Gameboy.graphics = require(script.graphics)
@@ -15,6 +16,7 @@ Gameboy.processor = require(script.z80)
 function Gameboy:initialize()
     self.audio.initialize()
     self.graphics.initialize(self)
+    self.camera.initialize(self)
     self.cartridge.initialize(self)
 
     self:reset()
@@ -36,6 +38,7 @@ function Gameboy:reset()
     self.audio.reset()
     self.io.reset(self)
     self.memory.reset()
+    self.camera.reset()
     self.cartridge.reset()
     self.graphics.reset() -- Note to self: this needs to come AFTER resetting IO
     self.timers:reset()
@@ -44,8 +47,18 @@ function Gameboy:reset()
     self.interrupts.enabled = 1
 end
 
+-- Save state version for compatibility checking
+local SAVESTATE_VERSION = 2
+
 function Gameboy:save_state()
     local state = {}
+    
+    -- Version and metadata for compatibility checking
+    state.version = SAVESTATE_VERSION
+    state.gameboy_type = self.type
+    state.timestamp = os.time and os.time() or 0
+    
+    -- Save all subsystem states
     state.audio = self.audio.save_state()
     state.cartridge = self.cartridge.save_state()
     state.io = self.io.save_state()
@@ -56,28 +69,54 @@ function Gameboy:save_state()
 
     -- Note: the underscore
     state.interrupts_enabled = self.interrupts.enabled
+    
     return state
 end
 
 function Gameboy:load_state(state)
+    -- Validate state structure
+    if not state then
+        error("Cannot load state: state is nil")
+    end
+    
+    -- Version compatibility check
+    local state_version = state.version or 1
+    if state_version > SAVESTATE_VERSION then
+        warn(string.format("[Gameboy] Save state version %d is newer than supported version %d, may cause issues", 
+            state_version, SAVESTATE_VERSION))
+    end
+    
     -- Ensure cartridge has data (loaded flag might be false after reset, but data is still there)
     if not self.cartridge.header or not self.cartridge.raw_data then
         error("Cannot load state: cartridge data is missing")
     end
     
+    -- Load subsystem states in correct order
+    -- IO should be loaded before graphics (graphics depends on IO registers)
+    self.io.load_state(state.io)
+    
+    -- Memory next
+    self.memory.load_state(state.memory)
+    
+    -- Audio state
     self.audio.load_state(state.audio)
+    
     -- Cartridge state loading is safe even if state.cartridge is nil (for MBC None)
     if state.cartridge then
         self.cartridge.load_state(state.cartridge)
     end
-    self.io.load_state(state.io)
-    self.memory.load_state(state.memory)
+    
+    -- Graphics depends on IO and memory being loaded first
     self.graphics.load_state(state.graphics)
+    
+    -- Timer state
     self.timers:load_state(state.timers)
+    
+    -- Processor state last
     self.processor.load_state(state.processor)
 
     -- Note: the underscore
-    self.interrupts.enabled = state.interrupts_enabled
+    self.interrupts.enabled = state.interrupts_enabled or 1
     
     -- Ensure cartridge is marked as loaded if data is present
     if self.cartridge.header and self.cartridge.raw_data then
@@ -107,36 +146,77 @@ function Gameboy:load_state(state)
             self.graphics.registers.background_tilemap = self.graphics.cache.map_0
             self.graphics.registers.background_attr = self.graphics.cache.map_0_attr
         end
+        
+        -- Update tile select based on LCDC bit 4
+        if bit32.band(0x10, lcdc) ~= 0 then
+            self.graphics.registers.tile_select = 0x8000
+        else
+            self.graphics.registers.tile_select = 0x9000
+        end
     end
+    
+    -- Refresh LCD status to ensure consistency
+    self.graphics.refresh_lcdstat()
 end
 
+-- Optimized: Cache module references for hot path
 function Gameboy:step()
-    self.timers:update()
-    if self.timers.system_clock > self.graphics.next_edge then
+    local timers = self.timers
+    timers:update()
+    if timers.system_clock > self.graphics.next_edge then
         self.graphics.update()
     end
     self.processor.process_instruction()
-    return
 end
 
 function Gameboy:run_until_vblank()
+    local io_ram = self.io.ram
+    local ly_port = self.io.ports.LY
+    local timers = self.timers
+    local graphics = self.graphics
+    local processor = self.processor
+    local process_instruction = processor.process_instruction
+    local timers_update = timers.update
+    local graphics_update = graphics.update
+    
     local instructions = 0
-    while self.io.ram[self.io.ports.LY] == 144 and instructions < 100000 do
-        self:step()
+    while io_ram[ly_port] == 144 and instructions < 100000 do
+        timers_update(timers)
+        if timers.system_clock > graphics.next_edge then
+            graphics_update()
+        end
+        process_instruction()
         instructions += 1
     end
-    while self.io.ram[self.io.ports.LY] ~= 144 and instructions < 100000 do
-        self:step()
+    while io_ram[ly_port] ~= 144 and instructions < 100000 do
+        timers_update(timers)
+        if timers.system_clock > graphics.next_edge then
+            graphics_update()
+        end
+        process_instruction()
         instructions += 1
     end
     self.audio.update()
 end
 
 function Gameboy:run_until_hblank()
-    local old_scanline = self.io.ram[self.io.ports.LY]
+    local io_ram = self.io.ram
+    local ly_port = self.io.ports.LY
+    local old_scanline = io_ram[ly_port]
+    local timers = self.timers
+    local graphics = self.graphics
+    local processor = self.processor
+    local process_instruction = processor.process_instruction
+    local timers_update = timers.update
+    local graphics_update = graphics.update
+    
     local instructions = 0
-    while old_scanline == self.io.ram[self.io.ports.LY] and instructions < 100000 do
-        self:step()
+    while old_scanline == io_ram[ly_port] and instructions < 100000 do
+        timers_update(timers)
+        if timers.system_clock > graphics.next_edge then
+            graphics_update()
+        end
+        process_instruction()
         instructions += 1
     end
     self.audio.update()
@@ -198,6 +278,7 @@ Gameboy.new = function()
     new_gameboy.timers = Gameboy.timers.new(new_gameboy)
 
     new_gameboy.audio = Gameboy.audio.new(new_gameboy)
+    new_gameboy.camera = Gameboy.camera.new(new_gameboy)
     new_gameboy.cartridge = Gameboy.cartridge.new(new_gameboy)
     new_gameboy.dma = Gameboy.dma.new(new_gameboy)
     new_gameboy.graphics = Gameboy.graphics.new(new_gameboy)

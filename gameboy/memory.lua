@@ -117,32 +117,113 @@ function Memory.new(modules)
         memory.work_ram_1.bank = 1
     end
 
+    -- Base64 encoding table
+    local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    
+    -- Helper to encode byte array as base64 string (JSON-safe for DataStore)
+    local function encodeBytes(data, startAddr, endAddr)
+        local bytes = {}
+        for i = startAddr, endAddr do
+            bytes[#bytes + 1] = data[i] or 0
+        end
+        
+        -- Base64 encode
+        local result = {}
+        local n = #bytes
+        for i = 1, n, 3 do
+            local b1 = bytes[i] or 0
+            local b2 = bytes[i + 1] or 0
+            local b3 = bytes[i + 2] or 0
+            
+            local c1 = bit32.rshift(b1, 2)
+            local c2 = bit32.bor(bit32.lshift(bit32.band(b1, 3), 4), bit32.rshift(b2, 4))
+            local c3 = bit32.bor(bit32.lshift(bit32.band(b2, 15), 2), bit32.rshift(b3, 6))
+            local c4 = bit32.band(b3, 63)
+            
+            result[#result + 1] = string.sub(b64chars, c1 + 1, c1 + 1)
+            result[#result + 1] = string.sub(b64chars, c2 + 1, c2 + 1)
+            if i + 1 <= n then
+                result[#result + 1] = string.sub(b64chars, c3 + 1, c3 + 1)
+            else
+                result[#result + 1] = "="
+            end
+            if i + 2 <= n then
+                result[#result + 1] = string.sub(b64chars, c4 + 1, c4 + 1)
+            else
+                result[#result + 1] = "="
+            end
+        end
+        return table.concat(result)
+    end
+    
+    -- Helper to decode base64 string back to byte array
+    local function decodeBytes(str, startAddr)
+        local data = {}
+        local b64lookup = {}
+        for i = 1, 64 do
+            b64lookup[string.sub(b64chars, i, i)] = i - 1
+        end
+        b64lookup["="] = 0
+        
+        local bytes = {}
+        for i = 1, #str, 4 do
+            local c1 = b64lookup[string.sub(str, i, i)] or 0
+            local c2 = b64lookup[string.sub(str, i + 1, i + 1)] or 0
+            local c3 = b64lookup[string.sub(str, i + 2, i + 2)] or 0
+            local c4 = b64lookup[string.sub(str, i + 3, i + 3)] or 0
+            
+            bytes[#bytes + 1] = bit32.bor(bit32.lshift(c1, 2), bit32.rshift(c2, 4))
+            if string.sub(str, i + 2, i + 2) ~= "=" then
+                bytes[#bytes + 1] = bit32.band(bit32.bor(bit32.lshift(c2, 4), bit32.rshift(c3, 2)), 255)
+            end
+            if string.sub(str, i + 3, i + 3) ~= "=" then
+                bytes[#bytes + 1] = bit32.band(bit32.bor(bit32.lshift(c3, 6), c4), 255)
+            end
+        end
+        
+        for i, v in ipairs(bytes) do
+            data[startAddr + i - 1] = v
+        end
+        return data
+    end
+
     memory.save_state = function()
         local state = {}
 
-        state.work_ram_0 = {}
-        for i = 0xC000, 0xCFFF do
-            state.work_ram_0[i] = memory.work_ram_0[i]
-        end
-
-        state.work_ram_1_raw = {}
-        for i = 0xD000, (0xD000 + (4 * 7 * 1024) - 1) do
-            state.work_ram_1_raw[i] = memory.work_ram_1_raw[i]
-        end
-
-        state.work_ram_1_bank = 1
+        -- Store WRAM as compact strings
+        state.work_ram_0_data = encodeBytes(memory.work_ram_0, 0xC000, 0xCFFF)
+        state.work_ram_1_data = encodeBytes(memory.work_ram_1_raw, 0xD000, 0xD000 + (4 * 7 * 1024) - 1)
+        state.work_ram_1_bank = memory.work_ram_1.bank or 1
 
         return state
     end
 
     memory.load_state = function(state)
-        for i = 0xC000, 0xCFFF do
-            -- Handle nil values (can occur during save state loading)
-            memory.work_ram_0[i] = state.work_ram_0[i] or 0
+        if not state then return end
+        
+        -- Load WRAM from compact string format (new) or legacy format
+        if state.work_ram_0_data then
+            local decoded = decodeBytes(state.work_ram_0_data, 0xC000)
+            for addr, value in pairs(decoded) do
+                memory.work_ram_0[addr] = value
+            end
+        elseif state.work_ram_0 then
+            -- Legacy format
+            for i = 0xC000, 0xCFFF do
+                memory.work_ram_0[i] = state.work_ram_0[i] or 0
+            end
         end
-        for i = 0xD000, (0xD000 + (4 * 7 * 1024) - 1) do
-            -- Handle nil values (can occur during save state loading)
-            memory.work_ram_1_raw[i] = state.work_ram_1_raw[i] or 0
+        
+        if state.work_ram_1_data then
+            local decoded = decodeBytes(state.work_ram_1_data, 0xD000)
+            for addr, value in pairs(decoded) do
+                memory.work_ram_1_raw[addr] = value
+            end
+        elseif state.work_ram_1_raw then
+            -- Legacy format
+            for i = 0xD000, (0xD000 + (4 * 7 * 1024) - 1) do
+                memory.work_ram_1_raw[i] = state.work_ram_1_raw[i] or 0
+            end
         end
 
         memory.work_ram_1.bank = state.work_ram_1_bank or 1

@@ -6,40 +6,24 @@ local function apply(opcodes, opcode_cycles, z80, memory)
     local reg = z80.registers
     local flags = reg.flags
 
+    -- Optimized: Remove nil checks - registers are always valid during normal operation
     local add_to_a = function(value)
-        -- Handle nil values (can occur during save state loading)
-        local a = reg.a or 0
-        local v = value or 0
-        -- half-carry
-        flags.h = bit32.band(a, 0xF) + bit32.band(v, 0xF) > 0xF
-
-        local sum = a + v
-
-        -- carry (and overflow correction)
+        local a = reg.a
+        flags.h = bit32.band(a, 0xF) + bit32.band(value, 0xF) > 0xF
+        local sum = a + value
         flags.c = sum > 0xFF
-
         reg.a = bit32.band(sum, 0xFF)
-
         flags.z = reg.a == 0
         flags.n = false
     end
 
     local adc_to_a = function(value)
-        -- Handle nil values (can occur during save state loading)
-        local a = reg.a or 0
-        local v = value or 0
-        -- half-carry
-        local carry = 0
-        if flags.c then
-            carry = 1
-        end
-        flags.h = bit32.band(a, 0xF) + bit32.band(v, 0xF) + carry > 0xF
-        local sum = a + v + carry
-
-        -- carry (and overflow correction)
+        local a = reg.a
+        local carry = flags.c and 1 or 0
+        flags.h = bit32.band(a, 0xF) + bit32.band(value, 0xF) + carry > 0xF
+        local sum = a + value + carry
         flags.c = sum > 0xFF
         reg.a = bit32.band(sum, 0xFF)
-
         flags.z = reg.a == 0
         flags.n = false
     end

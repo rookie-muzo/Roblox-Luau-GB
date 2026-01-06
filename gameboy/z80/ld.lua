@@ -270,40 +270,39 @@ local function apply(opcodes, opcode_cycles, z80, memory)
         reg.a = read_nn()
     end
 
-    -- ld A, (xx)
+    -- ld A, (xx) - Optimized: Inline register pair calculation
     opcode_cycles[0x0A] = 8
     opcodes[0x0A] = function()
-        reg.a = read_byte(reg.bc())
+        reg.a = read_byte(reg.b * 256 + reg.c)
     end
 
     opcode_cycles[0x1A] = 8
     opcodes[0x1A] = function()
-        reg.a = read_byte(reg.de())
+        reg.a = read_byte(reg.d * 256 + reg.e)
     end
 
+    -- Optimized: Use multiplication instead of bit32.lshift for address calculation
     opcode_cycles[0xFA] = 16
     opcodes[0xFA] = function()
         local lower = read_nn()
-        local upper = bit32.lshift(read_nn(), 8)
-        reg.a = read_byte(upper + lower)
+        reg.a = read_byte(read_nn() * 256 + lower)
     end
 
     -- ld (xx), A
     opcode_cycles[0x02] = 8
     opcodes[0x02] = function()
-        write_byte(reg.bc(), reg.a)
+        write_byte(reg.b * 256 + reg.c, reg.a)
     end
 
     opcode_cycles[0x12] = 8
     opcodes[0x12] = function()
-        write_byte(reg.de(), reg.a)
+        write_byte(reg.d * 256 + reg.e, reg.a)
     end
 
     opcode_cycles[0xEA] = 16
     opcodes[0xEA] = function()
         local lower = read_nn()
-        local upper = bit32.lshift(read_nn(), 8)
-        write_byte(upper + lower, reg.a)
+        write_byte(read_nn() * 256 + lower, reg.a)
     end
 
     -- ld a, (FF00 + nn)
@@ -330,32 +329,57 @@ local function apply(opcodes, opcode_cycles, z80, memory)
         write_byte(0xFF00 + reg.c, reg.a)
     end
 
+    -- Optimized: Inline HL calculation for common copy loop instructions
     -- ldi (HL), a
     opcode_cycles[0x22] = 8
     opcodes[0x22] = function()
         set_at_hl(reg.a)
-        reg.set_hl(bit32.band(reg.hl() + 1, 0xFFFF))
+        local l = reg.l + 1
+        if l > 0xFF then
+            reg.l = 0
+            reg.h = bit32.band(reg.h + 1, 0xFF)
+        else
+            reg.l = l
+        end
     end
 
     -- ldi a, (HL)
     opcode_cycles[0x2A] = 8
     opcodes[0x2A] = function()
         reg.a = read_at_hl()
-        reg.set_hl(bit32.band(reg.hl() + 1, 0xFFFF))
+        local l = reg.l + 1
+        if l > 0xFF then
+            reg.l = 0
+            reg.h = bit32.band(reg.h + 1, 0xFF)
+        else
+            reg.l = l
+        end
     end
 
     -- ldd (HL), a
     opcode_cycles[0x32] = 8
     opcodes[0x32] = function()
         set_at_hl(reg.a)
-        reg.set_hl(bit32.band(reg.hl() - 1, 0xFFFF))
+        local l = reg.l - 1
+        if l < 0 then
+            reg.l = 0xFF
+            reg.h = bit32.band(reg.h - 1, 0xFF)
+        else
+            reg.l = l
+        end
     end
 
     -- ldd a, (HL)
     opcode_cycles[0x3A] = 8
     opcodes[0x3A] = function()
         reg.a = read_at_hl()
-        reg.set_hl(bit32.band(reg.hl() - 1, 0xFFFF))
+        local l = reg.l - 1
+        if l < 0 then
+            reg.l = 0xFF
+            reg.h = bit32.band(reg.h - 1, 0xFF)
+        else
+            reg.l = l
+        end
     end
 
     -- ====== GMB 16-bit load commands ======
